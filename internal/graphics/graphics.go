@@ -9,6 +9,7 @@ func Run(update, draw func()) {
 	rl.InitWindow(int32(rl.GetMonitorWidth(0)), int32(rl.GetMonitorHeight(0)), "raylib [core] example - basic window")
 	defer rl.CloseWindow()
 
+	rl.SetExitKey(rl.KeyNull) // ESC is used to toggle terminal, not to quit; close via window button
 	rl.SetTargetFPS(60)
 
 	for !rl.WindowShouldClose() {
