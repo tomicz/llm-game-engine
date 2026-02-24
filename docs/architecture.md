@@ -93,8 +93,10 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `grid` | `--hide` | Hide the 3D editor grid. |
 | `fps` | `--show` | Show FPS counter (top-right, green). Part of debugging; off by default. |
 | `fps` | `--hide` | Hide the FPS counter. |
+| `memalloc` | `--show` | Show memory allocation (under FPS, green). Off by default. |
+| `memalloc` | `--hide` | Hide the memory allocation display. |
 
-Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter.
+Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage.
 
 ---
 
@@ -103,6 +105,8 @@ Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS co
 **`internal/debug/`** provides runtime debugging overlays. All overlays are **hidden by default** and are toggled via the in-game terminal (e.g. `cmd fps --show` / `cmd fps --hide`).
 
 - **FPS** — Frames per second drawn at the **top-right** of the screen in **green** when enabled. Uses raylib’s `GetFPS()`.
+
+- **Mem** — Heap allocation (Go runtime) drawn **under FPS** in **green** when enabled (`cmd memalloc --show`). Uses `runtime.ReadMemStats()`; displayed as MiB.
 
 The debug system is drawn after the 3D scene and before the terminal in the main loop. New debug overlays can be added as fields and draw logic in `internal/debug/debug.go`, with corresponding commands registered in `main.go`.
 
@@ -116,3 +120,9 @@ Logs are written under **`logs/`** (relative to the process working directory; e
 |------|---------|
 | **`terminal.txt`** | Terminal/chat input only. Each line the user submits (Enter) is appended with a timestamp. Not cleared on start. |
 | **`engine_log.txt`** | Engine and raylib output only. All raylib trace messages (INFO, WARNING, ERROR, etc.—e.g. init, display, textures, shaders) are captured via `SetTraceLogCallback` and appended with timestamp and level. Engine errors logged with `log.Error(...)` also go here. Not cleared on start; use for debugging and post-run inspection. |
+
+---
+
+## Version control
+
+**Commit** and **push** are done by the user. Do not have an agent perform git commit or push unless the user explicitly asks for it.
