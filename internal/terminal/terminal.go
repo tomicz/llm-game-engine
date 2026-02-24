@@ -14,19 +14,37 @@ const (
 	padding   = 8
 )
 
-// Terminal is the chat/terminal input bar at the bottom of the screen. It handles input and drawing.
+// Terminal is the chat/terminal input bar at the bottom of the screen. It is shown/hidden with ESC.
+// When open, it handles typing and drawing; when closed, nothing is drawn and the player can move (WASD).
 type Terminal struct {
 	log      *logger.Logger
 	inputBuf string
+	open     bool
 }
 
-// New returns a new Terminal that logs lines to log.
+// New returns a new Terminal that logs lines to log. It starts closed (hidden); press ESC to open.
 func New(log *logger.Logger) *Terminal {
 	return &Terminal{log: log}
 }
 
-// Update handles keyboard input (typing, backspace, enter). Call once per frame.
+// IsOpen returns true when the terminal is visible and capturing input (player cannot move).
+func (t *Terminal) IsOpen() bool {
+	return t.open
+}
+
+// Update handles ESC (toggle open/closed), and when open: typing, backspace, enter. Call once per frame.
 func (t *Terminal) Update() {
+	if rl.IsKeyPressed(rl.KeyEscape) {
+		t.open = !t.open
+		if t.open {
+			rl.EnableCursor()
+		} else {
+			rl.DisableCursor()
+		}
+	}
+	if !t.open {
+		return
+	}
 	for {
 		c := rl.GetCharPressed()
 		if c == 0 {
@@ -44,8 +62,11 @@ func (t *Terminal) Update() {
 	}
 }
 
-// Draw draws the terminal bar at the bottom of the screen. Call after ClearBackground in the render loop.
+// Draw draws the terminal bar at the bottom when open. Call after ClearBackground in the render loop.
 func (t *Terminal) Draw() {
+	if !t.open {
+		return
+	}
 	screenW := int(rl.GetScreenWidth())
 	screenH := int(rl.GetScreenHeight())
 	barY := screenH - barHeight
