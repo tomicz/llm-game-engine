@@ -12,8 +12,10 @@ func main() {
 	term := terminal.New(log)
 	scn := scene.New()
 	update := func() {
-		scn.Update()
 		term.Update()
+		if !term.IsOpen() {
+			scn.Update()
+		}
 	}
 	draw := func() {
 		scn.Draw()
