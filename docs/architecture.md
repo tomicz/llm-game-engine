@@ -54,7 +54,8 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`cmd/game/`** — Entry point; `main()` wires logger, terminal, scene, and graphics.
 - **`internal/graphics/`** — Window, loop, clear. Calls `update`/`draw` each frame; no UI logic.
 - **`internal/scene/`** — 3D scene: Camera3D and free-camera update. Draw uses BeginMode3D and a custom **editor-style grid** on the XZ plane (minor/major lines every 1/10 units, extent ±50) plus X/Y/Z axis lines (red/green/blue) through the origin; see `drawEditorGrid()` in `scene.go`.
-- **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib).
+- **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib). Submits lines starting with `cmd ` to the command registry; see **In-game command system** below.
+- **`internal/commands/`** — In-game command system: subcommand registry, flag parsing (Go `flag.FlagSet` per command), and execution. Commands and flags are defined in code; no external config file.
 - **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
 - **`docs/`** — Documentation (e.g. this file).
 
@@ -69,7 +70,28 @@ The scene draws a Unity-style grid on the **XZ plane** (Y = 0, raylib Y-up):
 - **Minor lines** every 1 unit, dim gray; **major lines** every 10 units, brighter gray; extent ±50 on X and Z.
 - **Axis lines** through the origin: **X** red, **Y** green, **Z** blue.
 
-Tunables live in `internal/scene/scene.go` as constants: `gridExtent`, `gridMinorStep`, `gridMajorStep`, and the alpha values for minor/major/axis lines.
+Tunables live in `internal/scene/scene.go` as constants: `gridExtent`, `gridMinorStep`, `gridMajorStep`, and the alpha values for minor/major/axis lines. **Grid visibility** is controlled at runtime via the in-game terminal: `cmd grid --show` / `cmd grid --hide`. The scene exposes `GridVisible` and `SetGridVisible(bool)`; the grid is drawn only when `GridVisible` is true (default: true).
+
+---
+
+## In-game command system
+
+The terminal interprets lines that start with **`cmd `** (space required) as commands. The rest of the line is tokenized by spaces; the first token is the **subcommand** name, the rest are **flags and arguments** for that subcommand.
+
+- **Parsing:** `commands.Parse(line)` returns `(args []string, ok bool)`. Example: `cmd grid --show` → `args = ["grid", "--show"]`, `ok = true`.
+- **Registry:** `commands.NewRegistry()` creates an empty registry. Commands are registered in code with `reg.Register(name, *flag.FlagSet, run func() error)`. Each subcommand has its own Go `flag.FlagSet`, so you get standard flag syntax: `-flag`, `--flag`, `-flag=value`, etc.
+- **Execution:** `reg.Execute(args)` looks up the subcommand, parses `args[1:]` with that command’s FlagSet, then calls its `Run()`. Errors (unknown command, bad flags) are returned and shown in the terminal.
+
+**Adding a command:** In `cmd/game/main.go` (or wherever you wire the registry), create a `flag.NewFlagSet("subcommand", flag.ContinueOnError)`, define flags with `BoolVar`, `StringVar`, etc., and `reg.Register("subcommand", fs, func() error { ... })`. The closure can read the flag variables and call into scene/engine. No config file: commands and flags live in code and are fully extensible.
+
+**Built-in command:**
+
+| Command | Flags | Effect |
+|---------|-------|--------|
+| `grid` | `--show` | Show the 3D editor grid (XZ plane). |
+| `grid` | `--hide` | Hide the 3D editor grid. |
+
+Example: type `cmd grid --hide` and press Enter to hide the grid; `cmd grid --show` to show it again.
 
 ---
 

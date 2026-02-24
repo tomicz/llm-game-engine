@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"game-engine/internal/commands"
 	"game-engine/internal/logger"
 	"unicode/utf8"
 
@@ -16,15 +17,17 @@ const (
 
 // Terminal is the chat/terminal input bar at the bottom of the screen. It is shown/hidden with ESC.
 // When open, it handles typing and drawing; when closed, nothing is drawn and the player can move (WASD).
+// Lines starting with "cmd " are parsed as subcommand + flags and executed via the command registry.
 type Terminal struct {
 	log      *logger.Logger
+	reg      *commands.Registry
 	inputBuf string
 	open     bool
 }
 
-// New returns a new Terminal that logs lines to log. It starts closed (hidden); press ESC to open.
-func New(log *logger.Logger) *Terminal {
-	return &Terminal{log: log}
+// New returns a new Terminal that logs lines and runs "cmd ..." through reg. It starts closed (hidden); press ESC to open.
+func New(log *logger.Logger, reg *commands.Registry) *Terminal {
+	return &Terminal{log: log, reg: reg}
 }
 
 // IsOpen returns true when the terminal is visible and capturing input (player cannot move).
@@ -57,8 +60,15 @@ func (t *Terminal) Update() {
 		t.inputBuf = t.inputBuf[:len(t.inputBuf)-size]
 	}
 	if (rl.IsKeyPressed(rl.KeyEnter) || rl.IsKeyPressed(rl.KeyKpEnter)) && t.inputBuf != "" {
-		t.log.Log(t.inputBuf)
+		line := t.inputBuf
+		t.log.Log(line)
 		t.inputBuf = ""
+
+		if args, isCmd := commands.Parse(line); isCmd {
+			if err := t.reg.Execute(args); err != nil {
+				t.log.Log(err.Error())
+			}
+		}
 	}
 }
 

@@ -14,12 +14,13 @@ const (
 // Scene holds a 3D camera and draws the 3D world. Update runs camera logic (e.g. free camera);
 // Draw renders between BeginMode3D and EndMode3D. Based on raylib examples/core/core_3d_camera_free.
 type Scene struct {
-	Camera     rl.Camera3D
-	cursorDone bool
+	Camera      rl.Camera3D
+	cursorDone  bool
+	GridVisible bool
 }
 
 // New returns a scene with a perspective camera looking at the origin.
-// Camera: position (10,10,10), target (0,0,0), up (0,1,0), fovy 45°.
+// Camera: position (10,10,10), target (0,0,0), up (0,1,0), fovy 45°. Grid is visible by default.
 func New() *Scene {
 	s := &Scene{}
 	s.Camera.Position = rl.NewVector3(10, 10, 10)
@@ -27,7 +28,13 @@ func New() *Scene {
 	s.Camera.Up = rl.NewVector3(0, 1, 0)
 	s.Camera.Fovy = 45
 	s.Camera.Projection = rl.CameraPerspective
+	s.GridVisible = true
 	return s
+}
+
+// SetGridVisible sets whether the editor grid is drawn.
+func (s *Scene) SetGridVisible(visible bool) {
+	s.GridVisible = visible
 }
 
 // Update runs once per frame. Uses raylib UpdateCamera with CameraFree so the user can
@@ -42,10 +49,12 @@ func (s *Scene) Update() {
 }
 
 // Draw renders the 3D scene. Call after ClearBackground and before 2D overlay (e.g. terminal).
-// Draws a Unity-style grid on the XZ plane (Y=0) with minor/major lines and X/Y/Z axis lines.
+// Draws a Unity-style grid on the XZ plane (Y=0) when GridVisible is true.
 func (s *Scene) Draw() {
 	rl.BeginMode3D(s.Camera)
-	drawEditorGrid()
+	if s.GridVisible {
+		drawEditorGrid()
+	}
 	rl.EndMode3D()
 }
 
