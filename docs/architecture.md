@@ -57,4 +57,4 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/logger/`** — Stores and persists lines (e.g. to `logs/terminal.txt`).
 - **`docs/`** — Documentation (e.g. this file).
 
-Graphics and UI (terminal) are separate: graphics owns the window and loop; terminal owns its state, input, and draw. Add more `internal/*` packages as needed (e.g. `internal/input`, `internal/scene`).
+Graphics and UI (terminal) are separate: graphics owns the window and loop; terminal owns its state, input, and draw. Add more `internal/*` packages as needed (e.g. `internal/input`).
