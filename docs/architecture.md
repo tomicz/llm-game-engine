@@ -57,6 +57,7 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib). Submits lines starting with `cmd ` to the command registry; see **In-game command system** below.
 - **`internal/commands/`** — In-game command system: subcommand registry, flag parsing (Go `flag.FlagSet` per command), and execution. Commands and flags are defined in code; no external config file.
 - **`internal/debug/`** — Debugging overlays (e.g. FPS counter). All overlays are off by default; toggle via in-game terminal. See **Debug system** below.
+- **`internal/engineconfig/`** — Engine-only preferences (debug overlays, grid visibility). Persisted to `config/engine.json`; loaded at startup, saved on every toggle. See **Engine config persistence** below.
 - **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
 - **`docs/`** — Documentation (e.g. this file).
 
@@ -109,6 +110,19 @@ Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS co
 - **Mem** — Heap allocation (Go runtime) drawn **under FPS** in **green** when enabled (`cmd memalloc --show`). Uses `runtime.ReadMemStats()`; displayed as MiB.
 
 The debug system is drawn after the 3D scene and before the terminal in the main loop. New debug overlays can be added as fields and draw logic in `internal/debug/debug.go`, with corresponding commands registered in `main.go`.
+
+---
+
+## Engine config persistence
+
+**`internal/engineconfig/`** persists engine-only preferences across runs. This is **not** for in-game save data (that is a separate, future system).
+
+- **File:** `config/engine.json` (relative to the process working directory; e.g. `cmd/game/config/` when run from repo root). The directory is created on first save.
+- **Contents:** `show_fps`, `show_memalloc`, `grid_visible` (JSON booleans). Defaults when the file is missing: FPS and memalloc off, grid on.
+- **Load:** At startup, `engineconfig.Load()` is called; the returned prefs are applied to the debug and scene (e.g. `dbg.SetShowFPS(prefs.ShowFPS)`). If the file is missing or invalid, defaults are used.
+- **Save:** After every `grid`, `fps`, or `memalloc` command that changes state, the current debug and scene state is written to `config/engine.json`. Saving on each toggle keeps state in sync even if the game exits without a clean shutdown.
+
+Adding a new engine preference: add a field to `EnginePrefs` in `internal/engineconfig/engineconfig.go`, apply it after `Load()` in `main.go`, and call `saveEnginePrefs()` from the command that changes it.
 
 ---
 

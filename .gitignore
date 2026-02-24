@@ -4,3 +4,6 @@
 # Logs (generated at runtime)
 logs/
 terminal.txt
+
+# Engine config (user preferences, generated on first toggle)
+config/

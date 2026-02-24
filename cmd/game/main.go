@@ -4,6 +4,7 @@ import (
 	"flag"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
+	"game-engine/internal/engineconfig"
 	"game-engine/internal/graphics"
 	"game-engine/internal/logger"
 	"game-engine/internal/scene"
@@ -20,6 +21,19 @@ func main() {
 	dbg := debug.New()
 	reg := commands.NewRegistry()
 
+	// Apply persisted engine prefs (debug overlays, grid). Save on every toggle.
+	prefs, _ := engineconfig.Load()
+	dbg.SetShowFPS(prefs.ShowFPS)
+	dbg.SetShowMemAlloc(prefs.ShowMemAlloc)
+	scn.SetGridVisible(prefs.GridVisible)
+	saveEnginePrefs := func() {
+		_ = engineconfig.Save(engineconfig.EnginePrefs{
+			ShowFPS:      dbg.ShowFPS,
+			ShowMemAlloc: dbg.ShowMemAlloc,
+			GridVisible:  scn.GridVisible,
+		})
+	}
+
 	// grid: --show / --hide to show or hide the editor grid
 	var showGrid, hideGrid bool
 	gridFS := flag.NewFlagSet("grid", flag.ContinueOnError)
@@ -34,6 +48,7 @@ func main() {
 		if h {
 			scn.SetGridVisible(false)
 		}
+		saveEnginePrefs()
 		return nil
 	})
 
@@ -51,6 +66,7 @@ func main() {
 		if h {
 			dbg.SetShowFPS(false)
 		}
+		saveEnginePrefs()
 		return nil
 	})
 
@@ -68,6 +84,7 @@ func main() {
 		if h {
 			dbg.SetShowMemAlloc(false)
 		}
+		saveEnginePrefs()
 		return nil
 	})
 
