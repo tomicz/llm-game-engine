@@ -2,17 +2,21 @@ package graphics
 
 import rl "github.com/gen2brain/raylib-go/raylib"
 
-// Run starts the graphics window and main loop.
-func Run() {
-	rl.InitWindow(800, 450, "raylib [core] example - basic window")
+// Run starts the window and main loop. Each frame it calls update (e.g. input), then clears the screen and calls draw (e.g. UI).
+// This keeps the graphics layer separate from chat/terminal or other screen content.
+func Run(update, draw func()) {
+	rl.SetConfigFlags(rl.FlagFullscreenMode)
+	rl.InitWindow(int32(rl.GetMonitorWidth(0)), int32(rl.GetMonitorHeight(0)), "raylib [core] example - basic window")
 	defer rl.CloseWindow()
 
 	rl.SetTargetFPS(60)
 
 	for !rl.WindowShouldClose() {
+		update()
+
 		rl.BeginDrawing()
-		rl.ClearBackground(rl.RayWhite)
-		rl.DrawText("Congrats! You created your first window!", 190, 200, 20, rl.LightGray)
+		rl.ClearBackground(rl.Black)
+		draw()
 		rl.EndDrawing()
 	}
 }

@@ -51,8 +51,10 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 
 ## What this project uses
 
-- **`cmd/game/`** — Entry point; `main()` calls into `internal`.
-- **`internal/graphics/`** — Window and render loop (raylib).
+- **`cmd/game/`** — Entry point; `main()` wires logger, terminal, and graphics.
+- **`internal/graphics/`** — Window, loop, clear. Calls `update`/`draw` each frame; no UI logic.
+- **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib).
+- **`internal/logger/`** — Stores and persists lines (e.g. to `logs/terminal.txt`).
 - **`docs/`** — Documentation (e.g. this file).
 
-Add more `internal/*` packages as the engine grows (e.g. `internal/input`, `internal/scene`).
+Graphics and UI (terminal) are separate: graphics owns the window and loop; terminal owns its state, input, and draw. Add more `internal/*` packages as needed (e.g. `internal/input`, `internal/scene`).
