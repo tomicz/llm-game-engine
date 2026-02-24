@@ -53,12 +53,23 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 
 - **`cmd/game/`** — Entry point; `main()` wires logger, terminal, scene, and graphics.
 - **`internal/graphics/`** — Window, loop, clear. Calls `update`/`draw` each frame; no UI logic.
-- **`internal/scene/`** — 3D scene: Camera3D and free-camera update; Draw uses BeginMode3D/DrawGrid/EndMode3D.
+- **`internal/scene/`** — 3D scene: Camera3D and free-camera update. Draw uses BeginMode3D and a custom **editor-style grid** on the XZ plane (minor/major lines every 1/10 units, extent ±50) plus X/Y/Z axis lines (red/green/blue) through the origin; see `drawEditorGrid()` in `scene.go`.
 - **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib).
 - **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
 - **`docs/`** — Documentation (e.g. this file).
 
 Graphics and UI (terminal) are separate: graphics owns the window and loop; scene owns 3D camera and world; terminal owns its state, input, and draw. Add more `internal/*` packages as needed (e.g. `internal/input`).
+
+---
+
+## 3D editor grid
+
+The scene draws a Unity-style grid on the **XZ plane** (Y = 0, raylib Y-up):
+
+- **Minor lines** every 1 unit, dim gray; **major lines** every 10 units, brighter gray; extent ±50 on X and Z.
+- **Axis lines** through the origin: **X** red, **Y** green, **Z** blue.
+
+Tunables live in `internal/scene/scene.go` as constants: `gridExtent`, `gridMinorStep`, `gridMajorStep`, and the alpha values for minor/major/axis lines.
 
 ---
 
