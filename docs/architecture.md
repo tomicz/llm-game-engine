@@ -55,7 +55,18 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/graphics/`** — Window, loop, clear. Calls `update`/`draw` each frame; no UI logic.
 - **`internal/scene/`** — 3D scene: Camera3D and free-camera update; Draw uses BeginMode3D/DrawGrid/EndMode3D.
 - **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib).
-- **`internal/logger/`** — Stores and persists lines (e.g. to `logs/terminal.txt`).
+- **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
 - **`docs/`** — Documentation (e.g. this file).
 
 Graphics and UI (terminal) are separate: graphics owns the window and loop; scene owns 3D camera and world; terminal owns its state, input, and draw. Add more `internal/*` packages as needed (e.g. `internal/input`).
+
+---
+
+## Log files
+
+Logs are written under **`logs/`** (relative to the process working directory; e.g. `cmd/game/logs/` when run from repo root). Both files persist after the game exits.
+
+| File | Purpose |
+|------|---------|
+| **`terminal.txt`** | Terminal/chat input only. Each line the user submits (Enter) is appended with a timestamp. Not cleared on start. |
+| **`engine_log.txt`** | Engine and raylib output only. All raylib trace messages (INFO, WARNING, ERROR, etc.—e.g. init, display, textures, shaders) are captured via `SetTraceLogCallback` and appended with timestamp and level. Engine errors logged with `log.Error(...)` also go here. Not cleared on start; use for debugging and post-run inspection. |
