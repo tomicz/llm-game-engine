@@ -1,5 +1,6 @@
-# Binary
-game
+# Binary (root only; do not ignore cmd/game/)
+/game
 
 # Logs (generated at runtime)
 logs/
+terminal.txt
