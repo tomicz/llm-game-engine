@@ -54,6 +54,23 @@ func main() {
 		return nil
 	})
 
+	// memalloc: --show / --hide to show or hide the memory counter (under FPS, green). Hidden by default.
+	var showMemAlloc, hideMemAlloc bool
+	memallocFS := flag.NewFlagSet("memalloc", flag.ContinueOnError)
+	memallocFS.BoolVar(&showMemAlloc, "show", false, "show memory allocation")
+	memallocFS.BoolVar(&hideMemAlloc, "hide", false, "hide memory allocation")
+	reg.Register("memalloc", memallocFS, func() error {
+		s, h := showMemAlloc, hideMemAlloc
+		showMemAlloc, hideMemAlloc = false, false
+		if s {
+			dbg.SetShowMemAlloc(true)
+		}
+		if h {
+			dbg.SetShowMemAlloc(false)
+		}
+		return nil
+	})
+
 	term := terminal.New(logger, reg)
 	update := func() {
 		term.Update()
