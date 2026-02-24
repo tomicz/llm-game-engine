@@ -56,6 +56,7 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/scene/`** — 3D scene: Camera3D and free-camera update. Draw uses BeginMode3D and a custom **editor-style grid** on the XZ plane (minor/major lines every 1/10 units, extent ±50) plus X/Y/Z axis lines (red/green/blue) through the origin; see `drawEditorGrid()` in `scene.go`.
 - **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib). Submits lines starting with `cmd ` to the command registry; see **In-game command system** below.
 - **`internal/commands/`** — In-game command system: subcommand registry, flag parsing (Go `flag.FlagSet` per command), and execution. Commands and flags are defined in code; no external config file.
+- **`internal/debug/`** — Debugging overlays (e.g. FPS counter). All overlays are off by default; toggle via in-game terminal. See **Debug system** below.
 - **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
 - **`docs/`** — Documentation (e.g. this file).
 
@@ -84,14 +85,26 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 
 **Adding a command:** In `cmd/game/main.go` (or wherever you wire the registry), create a `flag.NewFlagSet("subcommand", flag.ContinueOnError)`, define flags with `BoolVar`, `StringVar`, etc., and `reg.Register("subcommand", fs, func() error { ... })`. The closure can read the flag variables and call into scene/engine. No config file: commands and flags live in code and are fully extensible.
 
-**Built-in command:**
+**Built-in commands:**
 
 | Command | Flags | Effect |
 |---------|-------|--------|
 | `grid` | `--show` | Show the 3D editor grid (XZ plane). |
 | `grid` | `--hide` | Hide the 3D editor grid. |
+| `fps` | `--show` | Show FPS counter (top-right, green). Part of debugging; off by default. |
+| `fps` | `--hide` | Hide the FPS counter. |
 
-Example: type `cmd grid --hide` and press Enter to hide the grid; `cmd grid --show` to show it again.
+Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter.
+
+---
+
+## Debug system
+
+**`internal/debug/`** provides runtime debugging overlays. All overlays are **hidden by default** and are toggled via the in-game terminal (e.g. `cmd fps --show` / `cmd fps --hide`).
+
+- **FPS** — Frames per second drawn at the **top-right** of the screen in **green** when enabled. Uses raylib’s `GetFPS()`.
+
+The debug system is drawn after the 3D scene and before the terminal in the main loop. New debug overlays can be added as fields and draw logic in `internal/debug/debug.go`, with corresponding commands registered in `main.go`.
 
 ---
 
