@@ -1,0 +1,22 @@
+/* Primitive UI styles — no shadows, no rounded corners */
+
+.panel {
+  background: #2a2a2a;
+  width: 320px;
+  height: 120px;
+  left: 24px;
+  top: 24px;
+  border: #444;
+}
+
+.title {
+  color: #eee;
+  left: 32px;
+  top: 32px;
+}
+
+.label {
+  color: #ccc;
+  left: 32px;
+  top: 56px;
+}

@@ -15,6 +15,12 @@ const (
 	padding   = 8
 )
 
+var (
+	// Reused every frame when drawing the terminal bar to avoid per-frame color allocations.
+	termBarColor  = rl.NewColor(40, 40, 40, 255)
+	termLineColor = rl.NewColor(80, 80, 80, 255)
+)
+
 // Terminal is the chat/terminal input bar at the bottom of the screen. It is shown/hidden with ESC.
 // When open, it handles typing and drawing; when closed, nothing is drawn and the player can move (WASD).
 // Lines starting with "cmd " are parsed as subcommand + flags and executed via the command registry.
@@ -81,8 +87,8 @@ func (t *Terminal) Draw() {
 	screenH := int(rl.GetScreenHeight())
 	barY := screenH - barHeight
 
-	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(barHeight), rl.NewColor(40, 40, 40, 255))
-	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, rl.NewColor(80, 80, 80, 255))
+	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(barHeight), termBarColor)
+	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, termLineColor)
 
 	text := prompt + t.inputBuf + "|"
 	rl.DrawText(text, int32(padding), int32(barY+padding), int32(fontSize), rl.White)

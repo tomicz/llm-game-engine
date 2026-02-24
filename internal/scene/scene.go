@@ -222,6 +222,7 @@ func drawSkybox(s *Scene) {
 }
 
 // drawEditorGrid draws an infinite-style grid on the XZ plane with major/minor lines and axis lines.
+// Reuses start/end vectors to avoid per-frame allocations in the hot loop.
 func drawEditorGrid() {
 	minor := rl.NewColor(128, 128, 128, gridMinorAlpha)
 	major := rl.NewColor(160, 160, 160, gridMajorAlpha)
@@ -229,14 +230,15 @@ func drawEditorGrid() {
 	axisY := rl.NewColor(80, 220, 80, axisLineAlpha)
 	axisZ := rl.NewColor(80, 80, 220, axisLineAlpha)
 
+	var start, end rl.Vector3
 	// Grid lines on XZ plane (Y=0): lines along X (varying Z) and along Z (varying X)
 	for x := -gridExtent; x <= gridExtent; x += gridMinorStep {
 		c := major
 		if x%gridMajorStep != 0 {
 			c = minor
 		}
-		start := rl.NewVector3(float32(x), 0, float32(-gridExtent))
-		end := rl.NewVector3(float32(x), 0, float32(gridExtent))
+		start.X, start.Y, start.Z = float32(x), 0, float32(-gridExtent)
+		end.X, end.Y, end.Z = float32(x), 0, float32(gridExtent)
 		rl.DrawLine3D(start, end, c)
 	}
 	for z := -gridExtent; z <= gridExtent; z += gridMinorStep {
@@ -244,13 +246,19 @@ func drawEditorGrid() {
 		if z%gridMajorStep != 0 {
 			c = minor
 		}
-		start := rl.NewVector3(float32(-gridExtent), 0, float32(z))
-		end := rl.NewVector3(float32(gridExtent), 0, float32(z))
+		start.X, start.Y, start.Z = float32(-gridExtent), 0, float32(z)
+		end.X, end.Y, end.Z = float32(gridExtent), 0, float32(z)
 		rl.DrawLine3D(start, end, c)
 	}
 
 	// Axis lines through origin (X=red, Y=green, Z=blue)
-	rl.DrawLine3D(rl.NewVector3(float32(-gridExtent), 0, 0), rl.NewVector3(float32(gridExtent), 0, 0), axisX)
-	rl.DrawLine3D(rl.NewVector3(0, float32(-gridExtent), 0), rl.NewVector3(0, float32(gridExtent), 0), axisY)
-	rl.DrawLine3D(rl.NewVector3(0, 0, float32(-gridExtent)), rl.NewVector3(0, 0, float32(gridExtent)), axisZ)
+	start.X, start.Y, start.Z = float32(-gridExtent), 0, 0
+	end.X, end.Y, end.Z = float32(gridExtent), 0, 0
+	rl.DrawLine3D(start, end, axisX)
+	start.X, start.Y, start.Z = 0, float32(-gridExtent), 0
+	end.X, end.Y, end.Z = 0, float32(gridExtent), 0
+	rl.DrawLine3D(start, end, axisY)
+	start.X, start.Y, start.Z = 0, 0, float32(-gridExtent)
+	end.X, end.Y, end.Z = 0, 0, float32(gridExtent)
+	rl.DrawLine3D(start, end, axisZ)
 }

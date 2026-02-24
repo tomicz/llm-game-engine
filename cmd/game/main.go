@@ -9,11 +9,20 @@ import (
 	"game-engine/internal/logger"
 	"game-engine/internal/scene"
 	"game-engine/internal/terminal"
+	"game-engine/internal/ui"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
 func main() {
+	// Optional: enable heap/CPU profiling. Run with DEBUG_PPROF=1, then e.g. go tool pprof -http=:8080 http://localhost:6060/debug/pprof/heap
+	if os.Getenv("DEBUG_PPROF") == "1" {
+		go func() { _ = http.ListenAndServe("localhost:6060", nil) }()
+	}
+
 	logger := logger.New()
 	rl.SetTraceLogCallback(logger.LogEngine) // capture raylib INFO/WARNING/ERROR to engine_log.txt
 
@@ -89,6 +98,18 @@ func main() {
 	})
 
 	term := terminal.New(logger, reg)
+
+	// UI: CSS-driven overlay (scene UI). Renders after debug, before terminal.
+	uiEngine := ui.New()
+	for _, path := range []string{"assets/ui/default.css", "../../assets/ui/default.css"} {
+		if err := uiEngine.LoadCSS(path); err == nil {
+			break
+		}
+	}
+	uiEngine.AddNode(ui.NewNode("panel", "panel", "", ""))
+	uiEngine.AddNode(ui.NewNode("label", "title", "", "UI"))
+	uiEngine.AddNode(ui.NewNode("label", "label", "", "CSS-driven"))
+
 	update := func() {
 		term.Update()
 		if !term.IsOpen() {
@@ -98,6 +119,7 @@ func main() {
 	draw := func() {
 		scn.Draw()
 		dbg.Draw()
+		uiEngine.Draw()
 		term.Draw()
 	}
 	graphics.Run(update, draw)

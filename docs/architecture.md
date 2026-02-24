@@ -59,9 +59,11 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/debug/`** — Debugging overlays (e.g. FPS counter). All overlays are off by default; toggle via in-game terminal. See **Debug system** below.
 - **`internal/engineconfig/`** — Engine-only preferences (debug overlays, grid visibility). Persisted to `config/engine.json`; loaded at startup, saved on every toggle. See **Engine config persistence** below.
 - **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
+- **`internal/ui/`** — Primitive CSS-driven UI: parser, style resolution, and raylib draw. See **Primitive CSS UI system** below.
 - **`docs/`** — Documentation (e.g. this file).
+- **`assets/ui/`** — UI assets only (CSS files). Kept separate from other assets (skybox, etc.). See **Primitive CSS UI system** below.
 
-Graphics and UI (terminal) are separate: graphics owns the window and loop; scene owns 3D camera and world; terminal owns its state, input, and draw. Add more `internal/*` packages as needed (e.g. `internal/input`).
+Graphics, scene UI, and terminal are separate: graphics owns the window and loop; scene owns 3D camera and world; **UI** draws scene-based overlays from CSS; **terminal** is the chat/LLM bar and draws on top of everything when enabled. Add more `internal/*` packages as needed (e.g. `internal/input`).
 
 ---
 
@@ -109,7 +111,22 @@ Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS co
 
 - **Mem** — Heap allocation (Go runtime) drawn **under FPS** in **green** when enabled (`cmd memalloc --show`). Uses `runtime.ReadMemStats()`; displayed as MiB.
 
-The debug system is drawn after the 3D scene and before the terminal in the main loop. New debug overlays can be added as fields and draw logic in `internal/debug/debug.go`, with corresponding commands registered in `main.go`.
+The debug system is drawn after the 3D scene and before the terminal in the main loop. New debug overlays can be added as fields and draw logic in `internal/debug/debug.go`, with corresponding commands registered in `main.go`. FPS and Mem text are only recomputed every 30 frames to limit allocations.
+
+**Memory profiling:** Run with `DEBUG_PPROF=1` to expose pprof on `http://localhost:6060`. Then e.g. `go tool pprof -http=:8080 http://localhost:6060/debug/pprof/heap` to inspect heap usage and find remaining allocation hotspots.
+
+---
+
+## Primitive CSS UI system
+
+**`internal/ui/`** provides a minimal, CSS-driven UI layer. It is **primitive**: no shadows, no rounded corners, no layout engine—just selectors, a small property set, and explicit position/size.
+
+- **Draw order:** Scene → Debug → **UI** → Terminal. So scene UI sits above the 3D view and debug, and the terminal (chat/LLM) always renders on top when enabled.
+- **Assets:** CSS and other UI data live under **`assets/ui/`** so they stay separate from skybox and other assets. Example: `assets/ui/default.css`.
+- **Selectors:** Only `.class` and `#id`. No combinators or pseudo-classes.
+- **Properties:** `background`, `color`, `border`, `width`, `height`, `left`, `top` (or `x`, `y`). Values: hex colors (`#RGB`, `#RRGGBB`), numbers with optional `px`.
+- **Model:** Nodes are created in code (type, class, id, optional text). The engine loads a stylesheet (e.g. from `assets/ui/default.css`), matches rules to nodes by class/id, resolves props to a computed style, and draws with raylib (rectangles for background/border, text for labels).
+- **Scene binding (future):** A data layer (manifest or per-scene file) will map scene id → CSS file(s) so each scene can have its own styles; on scene switch, the engine will load that scene’s CSS.
 
 ---
 

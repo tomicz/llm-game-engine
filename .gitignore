@@ -1,5 +1,7 @@
 # Binary (root only; do not ignore cmd/game/)
 /game
+# Built game binary
+cmd/game/game
 
 # Logs (generated at runtime)
 logs/

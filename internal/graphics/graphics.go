@@ -4,8 +4,8 @@ import rl "github.com/gen2brain/raylib-go/raylib"
 
 // Run starts the window and main loop. Each frame it calls update (e.g. input), then clears the screen and calls draw (e.g. UI).
 // This keeps the graphics layer separate from chat/terminal or other screen content.
+// Window is created windowed (not exclusive fullscreen) so Alt-Tab / Cmd-Tab works for task switching.
 func Run(update, draw func()) {
-	rl.SetConfigFlags(rl.FlagFullscreenMode)
 	rl.InitWindow(int32(rl.GetMonitorWidth(0)), int32(rl.GetMonitorHeight(0)), "raylib [core] example - basic window")
 	defer rl.CloseWindow()
 

@@ -13,13 +13,16 @@ const (
 	LogFilePath = "logs/terminal.txt"
 	// EngineLogFilePath is the engine log file (raylib INFO/WARNING/ERROR and engine errors). Persists after exit.
 	EngineLogFilePath = "logs/engine_log.txt"
+	// maxLines caps in-memory terminal lines to avoid unbounded growth.
+	maxLines = 1000
 )
 
-// Logger stores terminal lines in memory and writes terminal logs to terminal.txt.
+// Logger stores terminal lines in memory (capped) and writes terminal logs to terminal.txt.
 // Engine/raylib output is appended to engine_log.txt and persists across game runs.
 type Logger struct {
-	mu    sync.Mutex
-	lines []string
+	mu         sync.Mutex
+	lines      []string
+	engineLog  *os.File
 }
 
 // New returns a new Logger and ensures the logs directory exists. Engine log is not cleared; output persists.
@@ -28,7 +31,9 @@ func New() *Logger {
 	dir := filepath.Dir(LogFilePath)
 	_ = os.MkdirAll(dir, 0755)
 	teeStderrToEngineLog(dir)
-	return &Logger{lines: make([]string, 0)}
+	engineLogPath := filepath.Join(dir, filepath.Base(EngineLogFilePath))
+	f, _ := os.OpenFile(engineLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	return &Logger{lines: make([]string, 0), engineLog: f}
 }
 
 // teeStderrToEngineLog redirects stderr through a pipe; a goroutine copies to both original stderr and engine_log.txt.
@@ -74,13 +79,16 @@ func logLevelName(level int) string {
 	}
 }
 
-// Log appends a terminal/chat line to memory and to logs/terminal.txt only. Use for user input from the terminal.
+// Log appends a terminal/chat line to memory (capped at maxLines) and to logs/terminal.txt. Use for user input from the terminal.
 func (l *Logger) Log(line string) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	stamped := "[" + ts + "] " + line
 
 	l.mu.Lock()
 	l.lines = append(l.lines, stamped)
+	if len(l.lines) > maxLines {
+		l.lines = l.lines[len(l.lines)-maxLines:]
+	}
 	l.mu.Unlock()
 
 	f, err := os.OpenFile(LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -92,6 +100,7 @@ func (l *Logger) Log(line string) {
 }
 
 // LogEngine appends a line to logs/engine_log.txt. Used by the raylib trace callback (INFO, WARNING, etc.). Persists after exit.
+// Uses a single open file handle to avoid per-message open/close and allocations.
 func (l *Logger) LogEngine(logType int, msg string) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	level := logLevelName(logType)
@@ -99,13 +108,9 @@ func (l *Logger) LogEngine(logType int, msg string) {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-
-	f, err := os.OpenFile(EngineLogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
+	if l.engineLog != nil {
+		_, _ = l.engineLog.WriteString(line)
 	}
-	_, _ = f.WriteString(line)
-	_ = f.Close()
 }
 
 // Error appends an engine error to logs/engine_log.txt. Persists after the game exits; use for engine errors only.
