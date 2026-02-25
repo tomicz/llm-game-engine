@@ -69,6 +69,16 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 		if s, err := parseFloat3(payload["scale"]); err == nil {
 			scale = s
 		}
+		scaleMin, errMin := parseFloat3(payload["scale_min"])
+		scaleMax, errMax := parseFloat3(payload["scale_max"])
+		useScaleRange := errMin == nil && errMax == nil
+		if useScaleRange {
+			for i := 0; i < 3; i++ {
+				if scaleMax[i] < scaleMin[i] {
+					scaleMin[i], scaleMax[i] = scaleMax[i], scaleMin[i]
+				}
+			}
+		}
 		physics := parseBoolOpt(payload["physics"], true)
 		for i := 0; i < count; i++ {
 			var pos [3]float32
@@ -94,11 +104,20 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 				row, col := i/cols, i%cols
 				pos = [3]float32{origin[0] + float32(col)*spacing, origin[1], origin[2] + float32(row)*spacing}
 			}
+			objScale := scale
+			if useScaleRange {
+				for j := 0; j < 3; j++ {
+					objScale[j] = scaleMin[j] + rand.Float32()*(scaleMax[j]-scaleMin[j])
+					if objScale[j] < 0.1 {
+						objScale[j] = 0.1
+					}
+				}
+			}
 			spawnTyp := typ
 			if randomType {
 				spawnTyp = primitiveTypes[rand.Intn(len(primitiveTypes))]
 			}
-			scn.AddPrimitiveWithPhysics(spawnTyp, pos, scale, physics)
+			scn.AddPrimitiveWithPhysics(spawnTyp, pos, objScale, physics)
 		}
 		return nil
 	})
