@@ -236,7 +236,13 @@ func main() {
 		}
 	})
 
-	// download: fetch image from URL and apply to selected object. Usage: cmd download image <url>
+	// download: fetch image from URL in background and apply to selected object when done. Usage: cmd download image <url>
+	type downloadResult struct {
+		Index int
+		Path  string
+		Err   error
+	}
+	downloadDone := make(chan *downloadResult, 8)
 	downloadFS := flag.NewFlagSet("download", flag.ContinueOnError)
 	reg.Register("download", downloadFS, func() error {
 		args := downloadFS.Args()
@@ -250,14 +256,55 @@ func main() {
 		if url == "" {
 			return fmt.Errorf("url is required")
 		}
+		idx := scn.SelectedIndex()
+		if idx < 0 {
+			return fmt.Errorf("no object selected (click an object with terminal open)")
+		}
+		go func() {
+			relPath, err := downloadImage(url, "assets/textures/downloaded")
+			downloadDone <- &downloadResult{Index: idx, Path: relPath, Err: err}
+		}()
+		return nil
+	})
+
+	// texture: apply image file as texture to selected object. Usage: cmd texture <path> (e.g. cmd texture assets/textures/downloaded/foo.png)
+	textureFS := flag.NewFlagSet("texture", flag.ContinueOnError)
+	reg.Register("texture", textureFS, func() error {
+		args := textureFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd texture <path> (e.g. cmd texture assets/textures/downloaded/foo.png)")
+		}
+		path := args[0]
+		if path == "" {
+			return fmt.Errorf("path is required")
+		}
 		if scn.SelectedIndex() < 0 {
 			return fmt.Errorf("no object selected (click an object with terminal open)")
 		}
-		relPath, err := downloadImage(url, "assets/textures/downloaded")
-		if err != nil {
-			return err
+		return scn.SetSelectedTexture(path)
+	})
+
+	// skybox: download image from URL in background and set as skybox when done. Usage: cmd skybox <url>
+	type skyboxResult struct {
+		Path string
+		Err  error
+	}
+	skyboxDone := make(chan *skyboxResult, 4)
+	skyboxFS := flag.NewFlagSet("skybox", flag.ContinueOnError)
+	reg.Register("skybox", skyboxFS, func() error {
+		args := skyboxFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd skybox <url> (e.g. cmd skybox https://example.com/panorama.jpg)")
 		}
-		return scn.SetSelectedTexture(relPath)
+		url := args[0]
+		if url == "" {
+			return fmt.Errorf("url is required")
+		}
+		go func() {
+			relPath, err := downloadImage(url, "assets/skybox/downloaded")
+			skyboxDone <- &skyboxResult{Path: relPath, Err: err}
+		}()
+		return nil
 	})
 
 	term := terminal.New(log, reg)
@@ -340,6 +387,37 @@ func main() {
 			}
 		}
 	done:
+		// Apply textures from background downloads (main thread only).
+		for {
+			select {
+			case res := <-downloadDone:
+				if res.Err != nil {
+					log.Log(res.Err.Error())
+				} else if err := scn.SetObjectTexture(res.Index, res.Path); err != nil {
+					log.Log(err.Error())
+				} else {
+					log.Log("Texture applied: " + res.Path)
+				}
+			default:
+				goto doneDownload
+			}
+		}
+	doneDownload:
+		// Set skybox from background downloads (main thread only).
+		for {
+			select {
+			case res := <-skyboxDone:
+				if res.Err != nil {
+					log.Log(res.Err.Error())
+				} else {
+					scn.SetSkyboxPath(res.Path)
+					log.Log("Skybox set: " + res.Path)
+				}
+			default:
+				goto doneSkybox
+			}
+		}
+	doneSkybox:
 		term.Update()
 		if term.IsOpen() {
 			// Cursor visible: allow selecting and moving primitives (not skybox/grid).

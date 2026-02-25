@@ -102,14 +102,18 @@ func buildSystemPrompt() string {
 		"- model: set AI model for future natural-language → [\"model\",\"llama-3.3-70b-versatile\"] or [\"model\",\"gpt-4o-mini\"]\n" +
 		"- physics: enable/disable physics on selected object → [\"physics\",\"on\"] or [\"physics\",\"off\"] (user must select an object first)\n" +
 		"- delete: remove an object → [\"delete\",\"selected\"] (selected object), [\"delete\",\"look\"] or [\"delete\",\"camera\"] (object camera is looking at), [\"delete\",\"random\"] (random object)\n" +
-		"- download: download image from URL and apply as texture to selected object → [\"download\",\"image\",\"https://example.com/image.png\"] (user must select an object first)\n\n" +
+		"- download: download image from URL and apply as texture to selected object → [\"download\",\"image\",\"https://example.com/image.png\"] (user must select an object first)\n" +
+		"- texture: apply image file as texture to selected object → [\"texture\",\"<path>\"] e.g. [\"texture\",\"assets/textures/downloaded/foo.png\"] (user must select an object first)\n" +
+		"- skybox: set skybox from image URL (downloads in background, supports panorama/cubemap) → [\"skybox\",\"<url>\"] e.g. [\"skybox\",\"https://example.com/panorama.jpg\"]\n\n" +
 		"Rules:\n" +
 		"- For \"spawn 100 random primitives at random positions\" or \"add 50 random objects spread around\", use add_objects with type \"random\" and pattern \"random\".\n" +
 		"- For \"spawn 100 cubes\", \"add 50 spheres\", \"30 cubes spread around\", use ONE add_objects action with count and pattern (grid, line, or random for spread around). Do not emit many separate add_object entries.\n" +
 		"- For a single object at a specific position, use add_object with position. For \"gravity off\", \"no gravity\", \"static\", use \"physics\": false.\n" +
 		"- For \"spawn 50 cubes with gravity off\", \"add 20 spheres no gravity\", \"spawn 100 static objects\", use add_objects with \"physics\": false.\n" +
 		"- For \"hide grid\", \"show FPS\", \"save the scene\", \"clear scene\", \"new scene\", \"fullscreen\", \"windowed\", \"show memory\", \"set model to X\", \"enable physics on selected\", \"delete selected\", \"delete what I'm looking at\", \"delete random object\" etc., use run_cmd with the appropriate args from the list above.\n" +
-		"- For \"download this image\", \"put this texture on the selected object\", \"apply image from URL\", use run_cmd [\"download\",\"image\",\"<url>\"] with the image URL. User must select an object first.\n" +
+		"- For \"download this image\", \"apply image from URL\", \"make that a texture from this URL\", use run_cmd [\"download\",\"image\",\"<url>\"] with the image URL. User must select an object first.\n" +
+		"- For \"make it a texture\", \"apply the downloaded image\", \"use this image as texture\", \"put this texture on the selected object\" when the image is already downloaded or user gives a path, use run_cmd [\"texture\",\"<path>\"] with the path (e.g. assets/textures/downloaded/filename.png). User must select an object first.\n" +
+		"- For \"set skybox to this url\", \"change skybox to ...\", \"use this as skybox\", \"download this skybox\", \"skybox from url\", use run_cmd [\"skybox\",\"<url>\"] with the image URL (panorama or cubemap).\n" +
 		"- Only use types: cube, sphere, cylinder, plane, or random (for add_objects).\n" +
 		"- Reply with only the JSON object."
 }

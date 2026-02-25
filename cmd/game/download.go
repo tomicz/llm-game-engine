@@ -13,9 +13,17 @@ import (
 
 // downloadImage fetches the image at url and saves it under dir (e.g. "assets/textures/downloaded").
 // Returns the relative path to the saved file (e.g. "assets/textures/downloaded/abc.png") and an error.
+// defaultUserAgent is sent so hosts that block non-browser clients (e.g. Freepik) allow the download.
+const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0"
+
 func downloadImage(url string, dir string) (relPath string, err error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	req.Header.Set("User-Agent", defaultUserAgent)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download failed: %w", err)
 	}

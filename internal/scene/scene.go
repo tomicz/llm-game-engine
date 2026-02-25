@@ -329,6 +329,15 @@ func (s *Scene) SetSelectedTexture(path string) error {
 	return nil
 }
 
+// SetObjectTexture sets the texture path on the object at the given index. Used when a background download completes.
+func (s *Scene) SetObjectTexture(index int, path string) error {
+	if index < 0 || index >= len(s.sceneData.Objects) {
+		return fmt.Errorf("object index out of range")
+	}
+	s.sceneData.Objects[index].Texture = path
+	return nil
+}
+
 // SaveScene writes the current scene (including runtime-spawned objects) to the scene YAML file.
 // Uses the path we loaded from, or the first path in scenePaths if none was loaded.
 // Returns an error if the file cannot be written.
@@ -360,46 +369,36 @@ func (s *Scene) NewScene() error {
 const equirectAspectMin = 1.8
 const equirectAspectMax = 2.2
 
-// loadSkybox finds the skybox file and decides cubemap vs equirect. GPU loading is deferred to
-// ensureSkyboxLoaded (called from Draw) so it runs after the window/OpenGL context exists.
+// loadSkybox finds the skybox file from skyboxPaths. GPU loading and equirect detection are deferred to
+// ensureSkyboxLoaded (called from Draw) so they run after the window/OpenGL context exists.
 func (s *Scene) loadSkybox() {
-	var path string
 	for _, p := range skyboxPaths {
 		cleaned := filepath.Clean(p)
 		if _, err := os.Stat(cleaned); err == nil {
-			path = cleaned
-			break
+			s.skyboxPath = cleaned
+			s.skyboxPending = true
+			return
 		}
 	}
-	if path == "" {
+}
+
+// ensureSkyboxLoaded runs the first time we Draw with a pending skybox; it loads GPU resources
+// (texture, mesh, material, shader) so that LoadTexture/LoadTextureCubemap run after the window/GL context exists.
+// Only clears pending/path on success so a failed load (e.g. GL not ready on first frame) will retry next frame.
+// Detects equirect vs cubemap from image aspect ratio when loading from a dynamically set path.
+func (s *Scene) ensureSkyboxLoaded() {
+	if !s.skyboxPending || s.skyboxPath == "" {
 		return
 	}
+	path := s.skyboxPath
 	img := rl.LoadImage(path)
 	if img == nil || img.Width <= 0 || img.Height <= 0 {
 		return
 	}
 	aspect := float32(img.Width) / float32(img.Height)
 	s.skyboxEquirect = aspect >= equirectAspectMin && aspect <= equirectAspectMax
-	rl.UnloadImage(img)
-
-	s.skyboxPath = path
-	s.skyboxPending = true
-}
-
-// ensureSkyboxLoaded runs the first time we Draw with a pending skybox; it loads GPU resources
-// (texture, mesh, material, shader) so that LoadTexture/LoadTextureCubemap run after the window/GL context exists.
-// Only clears pending/path on success so a failed load (e.g. GL not ready on first frame) will retry next frame.
-func (s *Scene) ensureSkyboxLoaded() {
-	if !s.skyboxPending || s.skyboxPath == "" {
-		return
-	}
-	path := s.skyboxPath
 
 	if !s.skyboxEquirect {
-		img := rl.LoadImage(path)
-		if img == nil || img.Width <= 0 || img.Height <= 0 {
-			return
-		}
 		s.skyboxTex = rl.LoadTextureCubemap(img, rl.CubemapLayoutAutoDetect)
 		rl.UnloadImage(img)
 		if !rl.IsTextureValid(s.skyboxTex) {
@@ -414,6 +413,7 @@ func (s *Scene) ensureSkyboxLoaded() {
 		return
 	}
 
+	rl.UnloadImage(img)
 	s.skyboxTex = rl.LoadTexture(path)
 	if !rl.IsTextureValid(s.skyboxTex) {
 		return
@@ -432,6 +432,26 @@ func (s *Scene) ensureSkyboxLoaded() {
 	s.skyboxPending = false
 	s.skyboxPath = ""
 	s.skyboxLoaded = true
+}
+
+// UnloadSkybox releases GPU resources for the current skybox. Call before setting a new skybox path.
+// UnloadMaterial unloads the material's attached shader, so we must not call UnloadShader separately (double-free).
+func (s *Scene) UnloadSkybox() {
+	if !s.skyboxLoaded {
+		return
+	}
+	rl.UnloadTexture(s.skyboxTex)
+	rl.UnloadMesh(&s.skyboxMesh)
+	rl.UnloadMaterial(s.skyboxMtl)
+	s.skyboxLoaded = false
+}
+
+// SetSkyboxPath sets the skybox to the given image path (e.g. from a downloaded file). Loads in the next Draw.
+// Supports equirectangular panoramas (2:1 aspect) and cubemaps. Call UnloadSkybox is not required; SetSkyboxPath unloads the current skybox first.
+func (s *Scene) SetSkyboxPath(path string) {
+	s.UnloadSkybox()
+	s.skyboxPath = path
+	s.skyboxPending = true
 }
 
 // Equirectangular skybox shader: samples a 2D panorama by view direction.
