@@ -33,7 +33,12 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 			scale = [3]float32{1, 1, 1}
 		}
 		physics := parseBoolOpt(payload["physics"], true)
-		scn.AddPrimitiveWithPhysics(typ, pos, scale, physics)
+		var color *[3]float32
+		if c, err := parseFloat3(payload["color"]); err == nil && (c[0] != 0 || c[1] != 0 || c[2] != 0) {
+			color = &c
+		}
+		scn.AddPrimitiveWithPhysics(typ, pos, scale, physics, color)
+		scn.RecordAdd(1)
 		return nil
 	})
 	a.RegisterHandler("add_objects", func(payload map[string]interface{}) error {
@@ -80,6 +85,10 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 			}
 		}
 		physics := parseBoolOpt(payload["physics"], true)
+		var color *[3]float32
+		if c, err := parseFloat3(payload["color"]); err == nil && (c[0] != 0 || c[1] != 0 || c[2] != 0) {
+			color = &c
+		}
 		for i := 0; i < count; i++ {
 			var pos [3]float32
 			switch pattern {
@@ -117,8 +126,9 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 			if randomType {
 				spawnTyp = primitiveTypes[rand.Intn(len(primitiveTypes))]
 			}
-			scn.AddPrimitiveWithPhysics(spawnTyp, pos, objScale, physics)
+			scn.AddPrimitiveWithPhysics(spawnTyp, pos, objScale, physics, color)
 		}
+		scn.RecordAdd(count)
 		return nil
 	})
 	a.RegisterHandler("run_cmd", func(payload map[string]interface{}) error {

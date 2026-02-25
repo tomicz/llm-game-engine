@@ -81,7 +81,7 @@ Graphics, scene UI, and terminal are separate: graphics owns the window and loop
 - **Default size:** Cube 1×1×1, sphere diameter 1 (radius 0.5), cylinder diameter 1 and height 1 (radius 0.5). All share the same 1-unit extent for consistent defaults.
 - **Origin at center:** Scene `position` is the **center** of each primitive. Cube and sphere meshes are already centered; the cylinder (raylib: base Y=0, top Y=height) gets a model-space offset so its center is at `position`.
 - **Default primitives folder:** `assets/primitives/` holds YAML files (e.g. `cube.yaml`, `sphere.yaml`, `cylinder.yaml`) with type and default size/color. Used for defaults; mesh generation is driven by type name in the registry.
-- **Scene file format:** YAML with `objects:` — list of `type`, `position` [x,y,z], optional `scale` [x,y,z]. Example: cube at center, sphere and cylinder beside it: `objects: [{ type: cube, position: [0,0,0], scale: [1,1,1] }, ...]`.
+- **Scene file format:** YAML with `objects:` — list of `type`, `position` [x,y,z], optional `scale` [x,y,z], optional `color` [r,g,b] (0-1), optional `name`, optional `motion` ("bob"). Example: cube at center, sphere and cylinder beside it: `objects: [{ type: cube, position: [0,0,0], scale: [1,1,1] }, ...]`.
 - **Parsing and persistence:** `gopkg.in/yaml.v3`; scene is loaded at startup from the first existing path in `scenePaths` (e.g. `assets/scenes/default.yaml`, `../../assets/scenes/default.yaml`). Saving the scene (e.g. from an editor) writes the same YAML format back. Scalable: add objects in YAML or new primitive types in code without changing the scene loader.
 
 ---
@@ -137,9 +137,22 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `newscene` | *(none)* | Clear all primitives and save an empty scene. |
 | `model` | `<name>` | Set AI model for natural-language commands (e.g. `cmd model gpt-4o-mini`). Persisted in engine config. |
 | `physics` | `on` \| `off` | Enable or disable physics (gravity/collision) on the selected object. Select an object first (terminal open, click). |
-| `delete` | `selected` \| `look` \| `random` | Remove an object: selected (current selection), look (object camera is looking at), or random. |
+| `delete` | `selected` \| `look` \| `random` \| `name <name>` | Remove an object: selected, look (camera target), random, or by name. |
+| `color` | `<r> <g> <b>` (0-1) | Set RGB color on the selected object (e.g. `cmd color 1 0 0` for red). Select first. |
+| `duplicate` | `[N]` (default 1) | Clone the selected object N times with offset. Select first. |
+| `screenshot` | *(none)* | Capture the current view to `screenshot.png` in the working directory. |
+| `lighting` | `noon` \| `sunset` \| `night` | Set directional light profile (time-of-day style). |
+| `name` | `<name>` | Set a label on the selected object (for reference and `delete name <name>`). Select first. |
+| `motion` | `off` \| `bob` | Set motion on selected: `bob` = gentle Y oscillation; `off` = static. Select first. |
+| `undo` | *(none)* | Revert the last add or delete (one level). |
+| `focus` | *(none)* | Point the camera target at the selected object. Select first. |
+| `gravity` | `<y>` (e.g. `-9.8`, `0`) | Set physics gravity Y (negative = down; `0` = zero-g). |
+| `template` | `tree [x y z]` | Spawn a preset (e.g. tree = cylinder trunk + sphere foliage). Optional position. |
+| `download` | `image <url>` | Download image from URL in background and apply as texture to selected. Select first. |
+| `texture` | `<path>` | Apply an image file (e.g. `assets/textures/downloaded/foo.png`) as texture to selected. Select first. |
+| `skybox` | `<url>` | Download image from URL in background and set as skybox (panorama or cubemap). |
 
-Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage; `cmd window --windowed` to switch to windowed mode; `cmd window --fullscreen` to switch back to fullscreen.
+Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd color 1 0 0` to make the selected object red; `cmd lighting sunset`; `cmd undo` to revert the last change; `cmd template tree` to spawn a tree.
 
 ---
 

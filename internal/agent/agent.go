@@ -88,8 +88,8 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (summary string, er
 func buildSystemPrompt() string {
 	return "You are a game editor. The user types natural language; you reply with exactly one JSON object and nothing else. No markdown, no code block, no explanation.\n\n" +
 		"Schema:\n" +
-		"- add_object: {\"action\":\"add_object\",\"type\":\"cube|sphere|cylinder|plane\",\"position\":[x,y,z],\"scale\":[sx,sy,sz],\"physics\":true|false} — one object. physics false = no gravity (static); omit or true = gravity on.\n" +
-		"- add_objects: {\"action\":\"add_objects\",\"type\":\"cube|sphere|cylinder|plane|random\",\"count\":N,\"pattern\":\"grid\"|\"line\"|\"random\",\"spacing\":2,\"origin\":[x,y,z],\"scale\":[sx,sy,sz],\"scale_min\":[sx,sy,sz],\"scale_max\":[sx,sy,sz],\"physics\":true|false} — many objects. Use for \"spawn 100 cubes\", \"add 50 spheres\", \"30 cubes spread around\". type \"random\" = random primitive type. pattern \"random\" = random positions. Use scale_min and scale_max together for random size per object (e.g. buildings with random heights: scale_min [1,5,1], scale_max [4,25,4]). spacing and origin optional. physics false = no gravity (static).\n" +
+		"- add_object: {\"action\":\"add_object\",\"type\":\"cube|sphere|cylinder|plane\",\"position\":[x,y,z],\"scale\":[sx,sy,sz],\"physics\":true|false,\"color\":[r,g,b]} — one object. color optional (0-1 RGB). physics false = static.\n" +
+		"- add_objects: {\"action\":\"add_objects\",\"type\":\"cube|sphere|cylinder|plane|random\",\"count\":N,\"pattern\":\"grid\"|\"line\"|\"random\",\"spacing\":2,\"origin\":[x,y,z],\"scale_min\":[sx,sy,sz],\"scale_max\":[sx,sy,sz],\"physics\":true|false,\"color\":[r,g,b]} — many objects. color optional. Use scale_min+scale_max for random sizes (e.g. city).\n" +
 		"- run_cmd: {\"action\":\"run_cmd\",\"args\":[\"subcommand\",\"arg1\",...]} — run an in-game command. Args are the tokens that would follow \"cmd \" (no \"cmd\" in the list).\n\n" +
 		"Available run_cmd commands (use these for any terminal command the user asks for):\n" +
 		"- grid: show/hide 3D editor grid → args [\"grid\",\"--show\"] or [\"grid\",\"--hide\"]\n" +
@@ -101,7 +101,17 @@ func buildSystemPrompt() string {
 		"- newscene: clear all objects and save empty scene → [\"newscene\"]\n" +
 		"- model: set AI model for future natural-language → [\"model\",\"llama-3.3-70b-versatile\"] or [\"model\",\"gpt-4o-mini\"]\n" +
 		"- physics: enable/disable physics on selected object → [\"physics\",\"on\"] or [\"physics\",\"off\"] (user must select an object first)\n" +
-		"- delete: remove an object → [\"delete\",\"selected\"] (selected object), [\"delete\",\"look\"] or [\"delete\",\"camera\"] (object camera is looking at), [\"delete\",\"random\"] (random object)\n" +
+		"- delete: remove object → [\"delete\",\"selected\"] | [\"delete\",\"look\"] | [\"delete\",\"random\"] | [\"delete\",\"name\",\"<name>\"]\n" +
+		"- color: set selected object RGB (0-1) → [\"color\",\"1\",\"0\",\"0\"] for red (user must select first)\n" +
+		"- duplicate: clone selected N times → [\"duplicate\",\"5\"] (user must select first)\n" +
+		"- screenshot: capture view → [\"screenshot\"]\n" +
+		"- lighting: time of day → [\"lighting\",\"noon\"] | [\"lighting\",\"sunset\"] | [\"lighting\",\"night\"]\n" +
+		"- name: set selected object name → [\"name\",\"Tower\"] (user must select first)\n" +
+		"- motion: set selected motion → [\"motion\",\"bob\"] | [\"motion\",\"off\"] (user must select first)\n" +
+		"- undo: revert last add or delete → [\"undo\"]\n" +
+		"- focus: point camera at selected → [\"focus\"] (user must select first)\n" +
+		"- gravity: set gravity Y → [\"gravity\",\"-9.8\"] or [\"gravity\",\"0\"] for zero-g\n" +
+		"- template: spawn preset → [\"template\",\"tree\"] or [\"template\",\"tree\",\"x\",\"y\",\"z\"]\n" +
 		"- download: download image from URL and apply as texture to selected object → [\"download\",\"image\",\"https://example.com/image.png\"] (user must select an object first)\n" +
 		"- texture: apply image file as texture to selected object → [\"texture\",\"<path>\"] e.g. [\"texture\",\"assets/textures/downloaded/foo.png\"] (user must select an object first)\n" +
 		"- skybox: set skybox from image URL (downloads in background, supports panorama/cubemap) → [\"skybox\",\"<url>\"] e.g. [\"skybox\",\"https://example.com/panorama.jpg\"]\n\n" +
@@ -115,6 +125,17 @@ func buildSystemPrompt() string {
 		"- For \"download this image\", \"apply image from URL\", \"make that a texture from this URL\", use run_cmd [\"download\",\"image\",\"<url>\"] with the image URL. User must select an object first.\n" +
 		"- For \"make it a texture\", \"apply the downloaded image\", \"use this image as texture\", \"put this texture on the selected object\" when the image is already downloaded or user gives a path, use run_cmd [\"texture\",\"<path>\"] with the path (e.g. assets/textures/downloaded/filename.png). User must select an object first.\n" +
 		"- For \"set skybox to this url\", \"change skybox to ...\", \"use this as skybox\", \"download this skybox\", \"skybox from url\", use run_cmd [\"skybox\",\"<url>\"] with the image URL (panorama or cubemap).\n" +
+		"- For \"make it red\", \"color the cube blue\", \"paint selected green\", use run_cmd [\"color\",\"r\",\"g\",\"b\"] with 0-1 values (e.g. red [\"color\",\"1\",\"0\",\"0\"]). User must select first.\n" +
+		"- For \"duplicate this\", \"clone it 5 times\", \"copy the selected object\", use run_cmd [\"duplicate\",\"N\"] (N=1 if not specified). User must select first.\n" +
+		"- For \"take a screenshot\", \"capture the screen\", use run_cmd [\"screenshot\"].\n" +
+		"- For \"sunset lighting\", \"make it night\", \"noon light\", use run_cmd [\"lighting\",\"sunset\"|\"night\"|\"noon\"].\n" +
+		"- For \"name this Tower\", \"call it Building1\", use run_cmd [\"name\",\"<name>\"]. User must select first.\n" +
+		"- For \"make it bounce\", \"bob the selected\", use run_cmd [\"motion\",\"bob\"]. To stop: [\"motion\",\"off\"]. User must select first.\n" +
+		"- For \"undo\", \"undo that\", \"revert last\", use run_cmd [\"undo\"].\n" +
+		"- For \"focus on selected\", \"look at the cube\", \"camera on selected\", use run_cmd [\"focus\"]. User must select first.\n" +
+		"- For \"zero gravity\", \"reverse gravity\", \"low gravity\", use run_cmd [\"gravity\",\"0\"] or [\"gravity\",\"4.9\"] etc.\n" +
+		"- For \"spawn a tree\", \"add a tree\", \"place a tree at 0 0 0\", use run_cmd [\"template\",\"tree\"] or [\"template\",\"tree\",\"x\",\"y\",\"z\"].\n" +
+		"- For \"delete the object named X\", \"remove Tower\", use run_cmd [\"delete\",\"name\",\"<name>\"].\n" +
 		"- Only use types: cube, sphere, cylinder, plane, or random (for add_objects).\n" +
 		"- Reply with only the JSON object."
 }

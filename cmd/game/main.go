@@ -173,6 +173,7 @@ func main() {
 			}
 		}
 		scn.AddPrimitive(typ, pos, scale)
+		scn.RecordAdd(1)
 		return nil
 	})
 
@@ -217,12 +218,12 @@ func main() {
 		}
 	})
 
-	// delete: remove an object. Usage: cmd delete selected | look | random
+	// delete: remove an object. Usage: cmd delete selected | look | random | name <name>
 	deleteFS := flag.NewFlagSet("delete", flag.ContinueOnError)
 	reg.Register("delete", deleteFS, func() error {
 		args := deleteFS.Args()
 		if len(args) < 1 {
-			return fmt.Errorf("usage: cmd delete selected | look | random")
+			return fmt.Errorf("usage: cmd delete selected | look | random | name <name>")
 		}
 		switch args[0] {
 		case "selected":
@@ -231,8 +232,14 @@ func main() {
 			return scn.DeleteAtCameraLook()
 		case "random":
 			return scn.DeleteRandom()
+		case "name":
+			if len(args) < 2 {
+				return fmt.Errorf("usage: cmd delete name <name>")
+			}
+			_, err := scn.DeleteByName(args[1])
+			return err
 		default:
-			return fmt.Errorf("use selected, look, or random (e.g. cmd delete selected)")
+			return fmt.Errorf("use selected, look, random, or name <name>")
 		}
 	})
 
@@ -304,6 +311,139 @@ func main() {
 			relPath, err := downloadImage(url, "assets/skybox/downloaded")
 			skyboxDone <- &skyboxResult{Path: relPath, Err: err}
 		}()
+		return nil
+	})
+
+	// color: set RGB (0-1) on selected object. Usage: cmd color <r> <g> <b> (e.g. cmd color 1 0 0 for red)
+	colorFS := flag.NewFlagSet("color", flag.ContinueOnError)
+	reg.Register("color", colorFS, func() error {
+		args := colorFS.Args()
+		if len(args) < 3 {
+			return fmt.Errorf("usage: cmd color <r> <g> <b> (0-1, e.g. cmd color 1 0 0)")
+		}
+		var c [3]float32
+		for i := 0; i < 3; i++ {
+			f, err := strconv.ParseFloat(args[i], 32)
+			if err != nil || f < 0 || f > 1 {
+				return fmt.Errorf("color components must be 0-1")
+			}
+			c[i] = float32(f)
+		}
+		return scn.SetSelectedColor(c)
+	})
+
+	// duplicate: clone selected object N times with offset. Usage: cmd duplicate [N] (default 1, offset 2 on X)
+	duplicateFS := flag.NewFlagSet("duplicate", flag.ContinueOnError)
+	reg.Register("duplicate", duplicateFS, func() error {
+		n := 1
+		if args := duplicateFS.Args(); len(args) >= 1 {
+			if v, err := strconv.Atoi(args[0]); err == nil && v >= 1 {
+				n = v
+			}
+		}
+		offset := [3]float32{2, 0, 0}
+		count, err := scn.DuplicateSelected(n, offset)
+		if err != nil {
+			return err
+		}
+		log.Log(fmt.Sprintf("Duplicated %d time(s).", count))
+		return nil
+	})
+
+	// screenshot: capture current view to screenshot.png (in cwd)
+	screenshotFS := flag.NewFlagSet("screenshot", flag.ContinueOnError)
+	reg.Register("screenshot", screenshotFS, func() error {
+		rl.TakeScreenshot("screenshot.png")
+		log.Log("Screenshot saved: screenshot.png")
+		return nil
+	})
+
+	// lighting: set time-of-day profile. Usage: cmd lighting noon | sunset | night
+	lightingFS := flag.NewFlagSet("lighting", flag.ContinueOnError)
+	reg.Register("lighting", lightingFS, func() error {
+		args := lightingFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd lighting noon | sunset | night")
+		}
+		scn.SetLighting(args[0])
+		return nil
+	})
+
+	// name: set name on selected object. Usage: cmd name <name>
+	nameFS := flag.NewFlagSet("name", flag.ContinueOnError)
+	reg.Register("name", nameFS, func() error {
+		args := nameFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd name <name>")
+		}
+		return scn.SetSelectedName(args[0])
+	})
+
+	// motion: set motion on selected. Usage: cmd motion off | bob | spin (spin not yet implemented)
+	motionFS := flag.NewFlagSet("motion", flag.ContinueOnError)
+	reg.Register("motion", motionFS, func() error {
+		args := motionFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd motion off | bob")
+		}
+		m := args[0]
+		if m == "off" {
+			m = ""
+		}
+		return scn.SetSelectedMotion(m)
+	})
+
+	// undo: revert last add or delete
+	undoFS := flag.NewFlagSet("undo", flag.ContinueOnError)
+	reg.Register("undo", undoFS, func() error {
+		return scn.Undo()
+	})
+
+	// focus: point camera at selected object
+	focusFS := flag.NewFlagSet("focus", flag.ContinueOnError)
+	reg.Register("focus", focusFS, func() error {
+		return scn.FocusOnSelected()
+	})
+
+	// gravity: set gravity strength/direction. Usage: cmd gravity <y> (e.g. -9.8, 0, 4.9 for low, 0 for float)
+	gravityFS := flag.NewFlagSet("gravity", flag.ContinueOnError)
+	reg.Register("gravity", gravityFS, func() error {
+		args := gravityFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd gravity <y> (e.g. cmd gravity -9.8 or 0 for zero-g)")
+		}
+		f, err := strconv.ParseFloat(args[0], 32)
+		if err != nil {
+			return fmt.Errorf("gravity must be a number")
+		}
+		scn.SetGravity([3]float32{0, float32(f), 0})
+		return nil
+	})
+
+	// template: spawn a preset (e.g. tree). Usage: cmd template tree [x y z]
+	templateFS := flag.NewFlagSet("template", flag.ContinueOnError)
+	reg.Register("template", templateFS, func() error {
+		args := templateFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd template tree [x y z]")
+		}
+		x, y, z := 0.0, 0.0, 0.0
+		if len(args) >= 4 {
+			for i, s := range []*float64{&x, &y, &z} {
+				if f, err := strconv.ParseFloat(args[1+i], 32); err == nil {
+					*s = f
+				}
+			}
+		}
+		switch args[0] {
+		case "tree":
+			// Trunk (cylinder) + foliage (sphere)
+			_ = reg.Execute([]string{"spawn", "cylinder", strconv.FormatFloat(x, 'f', -1, 32), strconv.FormatFloat(y, 'f', -1, 32), strconv.FormatFloat(z, 'f', -1, 32), "0.3", "2", "0.3"})
+			_ = reg.Execute([]string{"spawn", "sphere", strconv.FormatFloat(x, 'f', -1, 32), strconv.FormatFloat(y+1.5, 'f', -1, 32), strconv.FormatFloat(z, 'f', -1, 32), "1.2", "1.2", "1.2"})
+			log.Log("Spawned tree.")
+		default:
+			return fmt.Errorf("unknown template (use tree)")
+		}
 		return nil
 	})
 

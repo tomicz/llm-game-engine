@@ -2,6 +2,7 @@ package scene
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -57,12 +58,18 @@ type SceneData struct {
 // ObjectInstance describes one object in the scene: type (e.g. cube), position, optional scale.
 // Physics: nil or true = falls and collides; false = static (no gravity, still blocks others). Omit in YAML = physics on.
 // Texture: optional path to an image file (e.g. assets/textures/downloaded/foo.png); loaded and applied as albedo when set.
+// Color: optional RGB tint (0-1). When set, object is drawn with this tint; omit = default material color.
+// Name: optional label for reference (e.g. "Tower"); used by delete name <name> and inspector.
+// Motion: optional "spin" (rotate Y each frame) or "bob" (oscillate Y); omit = static.
 type ObjectInstance struct {
 	Type     string     `yaml:"type"`
 	Position [3]float32 `yaml:"position"`
 	Scale    [3]float32 `yaml:"scale,omitempty"`
 	Physics  *bool      `yaml:"physics,omitempty"`
 	Texture  string     `yaml:"texture,omitempty"`
+	Color    [3]float32 `yaml:"color,omitempty"`    // RGB 0-1; zero = use default
+	Name     string     `yaml:"name,omitempty"`
+	Motion   string     `yaml:"motion,omitempty"` // "spin" | "bob" | ""
 }
 
 // Scene holds a 3D camera and draws the 3D world. Update runs camera logic (e.g. free camera);
@@ -99,6 +106,28 @@ type Scene struct {
 	physicsWorld *physics.World
 	// textureCache: path -> GPU texture for object albedo. Loaded lazily in Draw when object has Texture set.
 	textureCache map[string]rl.Texture2D
+	// lightDir: direction to sun for primitive shading. Set by SetLighting(profile).
+	lightDir [3]float32
+	// lastUndo: one level of undo (add or delete).
+	lastUndo *undoRecord
+}
+
+// getLightDir returns the current light direction (normalized). Used by Draw.
+func (s *Scene) getLightDir() [3]float32 {
+	if s.lightDir[0] == 0 && s.lightDir[1] == 0 && s.lightDir[2] == 0 {
+		return [3]float32{0.5, 1, 0.5}
+	}
+	return s.lightDir
+}
+
+// motionPosition returns the draw position for obj, applying motion (e.g. bob) when set.
+func (s *Scene) motionPosition(obj ObjectInstance, index int) [3]float32 {
+	pos := obj.Position
+	if obj.Motion == "bob" {
+		t := float32(rl.GetTime())
+		pos[1] += 0.2 * float32(math.Sin(float64(t*2)))
+	}
+	return pos
 }
 
 // New returns a scene with a perspective camera looking at the origin.
@@ -117,6 +146,7 @@ func New() *Scene {
 	s.selectedIndex = -1 // no selection until user selects in terminal mode
 	s.physicsWorld = physics.NewWorld()
 	s.textureCache = make(map[string]rl.Texture2D)
+	s.lightDir = [3]float32{0.5, 1, 0.5}
 	s.loadScene()
 	s.ensurePhysicsBodies()
 	s.loadSkybox()
@@ -166,11 +196,14 @@ func (s *Scene) AddPrimitive(typ string, position, scale [3]float32) {
 }
 
 // AddPrimitiveWithPhysics adds a primitive with the given position, scale, and physics flag.
-// physics false = static (no gravity, still blocks others); true = falls and collides.
-// Plane uses Y scale 0.1 by default when scale[1] is 1.
-func (s *Scene) AddPrimitiveWithPhysics(typ string, position, scale [3]float32, physics bool) {
+// color is optional (nil = default material); name and motion can be set via SetSelected* after add.
+func (s *Scene) AddPrimitiveWithPhysics(typ string, position, scale [3]float32, physics bool, color *[3]float32) {
 	scale = applyPlaneDefaultScale(typ, scale)
-	s.AddObject(ObjectInstance{Type: typ, Position: position, Scale: scale, Physics: &physics})
+	obj := ObjectInstance{Type: typ, Position: position, Scale: scale, Physics: &physics}
+	if color != nil {
+		obj.Color = *color
+	}
+	s.AddObject(obj)
 }
 
 // applyPlaneDefaultScale returns scale with Y set to planeDefaultScaleY when typ is "plane" and scale[1] is 1.
@@ -240,6 +273,7 @@ func (s *Scene) DeleteSelected() error {
 	if idx < 0 {
 		return fmt.Errorf("no object selected (click an object with terminal open)")
 	}
+	s.RecordDelete([]ObjectInstance{s.sceneData.Objects[idx]})
 	return s.DeleteObjectAtIndex(idx)
 }
 
@@ -266,6 +300,7 @@ func (s *Scene) DeleteAtCameraLook() error {
 	if bestIdx < 0 {
 		return fmt.Errorf("no object in view (camera not looking at any object)")
 	}
+	s.RecordDelete([]ObjectInstance{s.sceneData.Objects[bestIdx]})
 	return s.DeleteObjectAtIndex(bestIdx)
 }
 
@@ -276,6 +311,7 @@ func (s *Scene) DeleteRandom() error {
 		return fmt.Errorf("no objects in scene")
 	}
 	i := rand.Intn(len(objs))
+	s.RecordDelete([]ObjectInstance{objs[i]})
 	return s.DeleteObjectAtIndex(i)
 }
 
@@ -336,6 +372,148 @@ func (s *Scene) SetObjectTexture(index int, path string) error {
 	}
 	s.sceneData.Objects[index].Texture = path
 	return nil
+}
+
+// SetSelectedColor sets the RGB color (0-1) on the currently selected object.
+func (s *Scene) SetSelectedColor(c [3]float32) error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected")
+	}
+	s.sceneData.Objects[idx].Color = c
+	return nil
+}
+
+// SetSelectedName sets the name on the currently selected object.
+func (s *Scene) SetSelectedName(name string) error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected")
+	}
+	s.sceneData.Objects[idx].Name = name
+	return nil
+}
+
+// SetSelectedMotion sets motion on the selected object ("", "spin", "bob").
+func (s *Scene) SetSelectedMotion(motion string) error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected")
+	}
+	s.sceneData.Objects[idx].Motion = motion
+	return nil
+}
+
+// SetLighting sets the directional light from a profile: "noon" (default), "sunset", "night".
+func (s *Scene) SetLighting(profile string) {
+	switch profile {
+	case "sunset":
+		s.lightDir = [3]float32{0.8, 0.3, 0.2} // warm, low
+	case "night":
+		s.lightDir = [3]float32{-0.3, 0.5, -0.5} // dim, blue-ish
+	default:
+		s.lightDir = [3]float32{0.5, 1, 0.5} // noon
+	}
+}
+
+// DuplicateSelected clones the selected object n times with a small position offset. Returns count duplicated.
+func (s *Scene) DuplicateSelected(n int, offset [3]float32) (int, error) {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return 0, fmt.Errorf("no object selected")
+	}
+	if n <= 0 {
+		return 0, nil
+	}
+	if n > 20 {
+		n = 20
+	}
+	obj := s.sceneData.Objects[idx]
+	for i := 0; i < n; i++ {
+		clone := obj
+		clone.Position[0] += offset[0] * float32(i+1)
+		clone.Position[1] += offset[1] * float32(i+1)
+		clone.Position[2] += offset[2] * float32(i+1)
+		clone.Name = "" // avoid duplicate names
+		s.sceneData.Objects = append(s.sceneData.Objects, clone)
+	}
+	s.syncSceneToPhysics()
+	return n, nil
+}
+
+// undoRecord holds one level of undo (either added indices or deleted objects).
+type undoRecord struct {
+	addCount    int              // last N objects added at end of list
+	deletedObjs []ObjectInstance // objects that were deleted
+}
+
+// RecordAdd records that count objects were just added at the end (for undo).
+func (s *Scene) RecordAdd(count int) {
+	if count <= 0 {
+		return
+	}
+	s.lastUndo = &undoRecord{addCount: count}
+}
+
+// RecordDelete records the given objects as deleted (for undo). Call before actually removing them.
+func (s *Scene) RecordDelete(objs []ObjectInstance) {
+	if len(objs) == 0 {
+		return
+	}
+	s.lastUndo = &undoRecord{deletedObjs: objs}
+}
+
+// Undo reverts the last add or delete. Returns nil on success.
+func (s *Scene) Undo() error {
+	if s.lastUndo == nil {
+		return fmt.Errorf("nothing to undo")
+	}
+	if s.lastUndo.addCount > 0 {
+		n := len(s.sceneData.Objects) - s.lastUndo.addCount
+		if n < 0 {
+			n = 0
+		}
+		s.sceneData.Objects = s.sceneData.Objects[:n]
+		s.syncSceneToPhysics()
+		if s.selectedIndex >= len(s.sceneData.Objects) {
+			s.selectedIndex = len(s.sceneData.Objects) - 1
+		}
+	} else {
+		s.sceneData.Objects = append(s.sceneData.Objects, s.lastUndo.deletedObjs...)
+		s.syncSceneToPhysics()
+	}
+	s.lastUndo = nil
+	return nil
+}
+
+// SetGravity sets the physics world gravity vector (e.g. [0, -9.8, 0] for down).
+func (s *Scene) SetGravity(g [3]float32) {
+	s.physicsWorld.SetGravity(g)
+}
+
+// FocusOnSelected sets the camera target to the selected object's position.
+func (s *Scene) FocusOnSelected() error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected")
+	}
+	obj := s.sceneData.Objects[idx]
+	s.Camera.Target = rl.NewVector3(obj.Position[0], obj.Position[1], obj.Position[2])
+	return nil
+}
+
+// DeleteByName removes the first object whose name matches. Returns true if one was removed.
+func (s *Scene) DeleteByName(name string) (bool, error) {
+	if name == "" {
+		return false, fmt.Errorf("name is required")
+	}
+	for i := range s.sceneData.Objects {
+		if s.sceneData.Objects[i].Name == name {
+			s.RecordDelete([]ObjectInstance{s.sceneData.Objects[i]})
+			return true, s.DeleteObjectAtIndex(i)
+		}
+	}
+	return false, fmt.Errorf("no object named %q", name)
 }
 
 // SaveScene writes the current scene (including runtime-spawned objects) to the scene YAML file.
@@ -583,8 +761,12 @@ func (s *Scene) Update() {
 }
 
 // objectAABB returns the world-space AABB for a scene object (primitives are centered at position).
-// Scale 0 is treated as 1 so we get a valid box.
 func objectAABB(obj ObjectInstance) rl.BoundingBox {
+	return objectAABBAt(obj, obj.Position)
+}
+
+// objectAABBAt returns the AABB for obj using the given center position (e.g. with motion applied).
+func objectAABBAt(obj ObjectInstance, pos [3]float32) rl.BoundingBox {
 	sx, sy, sz := obj.Scale[0], obj.Scale[1], obj.Scale[2]
 	if sx == 0 {
 		sx = 1
@@ -597,8 +779,8 @@ func objectAABB(obj ObjectInstance) rl.BoundingBox {
 	}
 	half := [3]float32{sx * 0.5, sy * 0.5, sz * 0.5}
 	return rl.NewBoundingBox(
-		rl.NewVector3(obj.Position[0]-half[0], obj.Position[1]-half[1], obj.Position[2]-half[2]),
-		rl.NewVector3(obj.Position[0]+half[0], obj.Position[1]+half[1], obj.Position[2]+half[2]),
+		rl.NewVector3(pos[0]-half[0], pos[1]-half[1], pos[2]-half[2]),
+		rl.NewVector3(pos[0]+half[0], pos[1]+half[1], pos[2]+half[2]),
 	)
 }
 
@@ -767,23 +949,29 @@ func (s *Scene) Draw(selectionVisible bool) {
 		drawSkybox(s)
 	}
 	viewPos := [3]float32{s.Camera.Position.X, s.Camera.Position.Y, s.Camera.Position.Z}
-	lightDir := [3]float32{0.5, 1, 0.5} // direction to light (above-right), for primitive shading
+	lightDir := s.getLightDir()
 	s.primitives.SetView(viewPos, lightDir)
 	for i, obj := range s.sceneData.Objects {
+		drawPos := s.motionPosition(obj, i)
+		var tint *[4]float32
+		if obj.Color[0] != 0 || obj.Color[1] != 0 || obj.Color[2] != 0 {
+			t := [4]float32{obj.Color[0], obj.Color[1], obj.Color[2], 1}
+			tint = &t
+		}
 		if obj.Texture != "" {
 			if tex, ok := s.EnsureTexture(obj.Texture); ok {
-				s.primitives.DrawWithTexture(obj.Type, obj.Position, obj.Scale, tex)
+				s.primitives.DrawWithTexture(obj.Type, drawPos, obj.Scale, tex, tint)
 			} else {
-				s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
+				s.primitives.Draw(obj.Type, drawPos, obj.Scale, tint)
 			}
 		} else {
-			s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
+			s.primitives.Draw(obj.Type, drawPos, obj.Scale, tint)
 		}
 		// Outline only in terminal mode and when this object is selected
 		if selectionVisible && s.selectedIndex == i {
-			box := objectAABB(obj)
+			box := objectAABBAt(obj, drawPos)
 			rl.DrawBoundingBox(box, rl.Yellow)
-			drawGizmoArrows(obj.Position)
+			drawGizmoArrows(drawPos)
 		}
 	}
 	if s.GridVisible {

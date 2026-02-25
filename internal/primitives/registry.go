@@ -289,16 +289,27 @@ func (r *Registry) setLitShaderUniforms(shader rl.Shader) {
 	}
 }
 
+// setColDiffuse sets the colDiffuse uniform (RGBA 0-1) for per-object tint. Call before DrawMesh when using tint.
+func (r *Registry) setColDiffuse(shader rl.Shader, tint [4]float32) {
+	if loc := rl.GetShaderLocation(shader, "colDiffuse"); loc >= 0 {
+		rl.SetShaderValueV(shader, loc, tint[:], rl.ShaderUniformVec4, 1)
+	}
+}
+
 // drawCached draws a cached mesh with the given key at position and scale (scale 0 → 1).
 // modelCenterOffset shifts the mesh in model space before scale/translate so the scene position
 // is the primitive's center. Use (0,0,0) for cube/sphere (already centered); (0,-0.5,0) for cylinder
 // (raylib cylinder has base at Y=0, top at Y=height, so offset -height/2 centers it).
-func (r *Registry) drawCached(key string, position, scale [3]float32, modelCenterOffset [3]float32) {
+// tint is optional (nil = default material color); otherwise RGBA 0-1.
+func (r *Registry) drawCached(key string, position, scale [3]float32, modelCenterOffset [3]float32, tint *[4]float32) {
 	c, ok := r.cache[key]
 	if !ok {
 		return
 	}
 	r.setLitShaderUniforms(c.mtl.Shader)
+	if tint != nil {
+		r.setColDiffuse(c.mtl.Shader, *tint)
+	}
 	sx, sy, sz := scale[0], scale[1], scale[2]
 	if sx == 0 {
 		sx = 1
@@ -322,14 +333,17 @@ func (r *Registry) drawCached(key string, position, scale [3]float32, modelCente
 	rl.DrawMesh(c.mesh, c.mtl, transform)
 }
 
-// drawCachedWithTexture draws a cached mesh with the given key using the textured material and the given albedo texture.
-func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32, modelCenterOffset [3]float32, tex rl.Texture2D) {
+// drawCachedWithTexture draws a cached mesh with textured material. with the given key using the textured material and the given albedo texture.
+func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32, modelCenterOffset [3]float32, tex rl.Texture2D, tint *[4]float32) {
 	c, ok := r.cache[key]
 	if !ok {
 		return
 	}
 	rl.SetMaterialTexture(&c.texturedMtl, rl.MapAlbedo, tex)
 	r.setLitShaderUniforms(c.texturedMtl.Shader)
+	if tint != nil {
+		r.setColDiffuse(c.texturedMtl.Shader, *tint)
+	}
 	sx, sy, sz := scale[0], scale[1], scale[2]
 	if sx == 0 {
 		sx = 1
@@ -352,51 +366,50 @@ func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32,
 	rl.DrawMesh(c.mesh, c.texturedMtl, transform)
 }
 
-// Draw draws one instance of the given type at position with scale.
+// Draw draws one instance of the given type at position with scale. tint is optional (nil = default color). of the given type at position with scale.
 // Must be called between BeginMode3D and EndMode3D.
 // SetView must be called once per frame before drawing so lit primitives get shading.
 // Unknown types are skipped. "cube", "sphere", "cylinder", and "plane" are created on first use.
-func (r *Registry) Draw(primType string, position, scale [3]float32) {
+func (r *Registry) Draw(primType string, position, scale [3]float32, tint *[4]float32) {
 	switch primType {
 	case "cube":
 		r.ensureCube()
-		r.drawCached("cube", position, scale, [3]float32{0, 0, 0})
+		r.drawCached("cube", position, scale, [3]float32{0, 0, 0}, tint)
 	case "sphere":
 		r.ensureSphere()
-		r.drawCached("sphere", position, scale, [3]float32{0, 0, 0})
+		r.drawCached("sphere", position, scale, [3]float32{0, 0, 0}, tint)
 	case "cylinder":
 		r.ensureCylinder()
-		// Raylib cylinder: base Y=0, top Y=height. Offset -height/2 so center is at position.
-		r.drawCached("cylinder", position, scale, [3]float32{0, -0.5, 0})
+		r.drawCached("cylinder", position, scale, [3]float32{0, -0.5, 0}, tint)
 	case "plane":
 		r.ensurePlane()
-		r.drawCached("plane", position, scale, [3]float32{0, 0, 0})
+		r.drawCached("plane", position, scale, [3]float32{0, 0, 0}, tint)
 	default:
-		// Unknown type; skip. More primitives added later on demand.
+		// Unknown type; skip.
 	}
 }
 
 // DrawWithTexture draws one instance of the given type at position with scale, using the given texture as albedo.
 // Must be called between BeginMode3D and EndMode3D. SetView must be called once per frame before drawing.
-func (r *Registry) DrawWithTexture(primType string, position, scale [3]float32, tex rl.Texture2D) {
+func (r *Registry) DrawWithTexture(primType string, position, scale [3]float32, tex rl.Texture2D, tint *[4]float32) {
 	if !rl.IsTextureValid(tex) {
-		r.Draw(primType, position, scale)
+		r.Draw(primType, position, scale, tint)
 		return
 	}
 	switch primType {
 	case "cube":
 		r.ensureCube()
-		r.drawCachedWithTexture("cube", position, scale, [3]float32{0, 0, 0}, tex)
+		r.drawCachedWithTexture("cube", position, scale, [3]float32{0, 0, 0}, tex, tint)
 	case "sphere":
 		r.ensureSphere()
-		r.drawCachedWithTexture("sphere", position, scale, [3]float32{0, 0, 0}, tex)
+		r.drawCachedWithTexture("sphere", position, scale, [3]float32{0, 0, 0}, tex, tint)
 	case "cylinder":
 		r.ensureCylinder()
-		r.drawCachedWithTexture("cylinder", position, scale, [3]float32{0, -0.5, 0}, tex)
+		r.drawCachedWithTexture("cylinder", position, scale, [3]float32{0, -0.5, 0}, tex, tint)
 	case "plane":
 		r.ensurePlane()
-		r.drawCachedWithTexture("plane", position, scale, [3]float32{0, 0, 0}, tex)
+		r.drawCachedWithTexture("plane", position, scale, [3]float32{0, 0, 0}, tex, tint)
 	default:
-		r.Draw(primType, position, scale)
+		r.Draw(primType, position, scale, tint)
 	}
 }

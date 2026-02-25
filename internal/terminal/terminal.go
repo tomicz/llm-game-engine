@@ -10,9 +10,11 @@ import (
 
 const (
 	BarHeight = 40
-	prompt    = "> "
-	fontSize  = 20
-	padding   = 8
+	// When windowed, move bar up by this many pixels so it stays visible (avoids being cut off by taskbar/window bounds).
+	WindowedBarOffset = 56
+	prompt            = "> "
+	fontSize          = 20
+	padding           = 8
 )
 
 var (
@@ -101,6 +103,9 @@ func (t *Terminal) Draw() {
 	screenW := int(rl.GetScreenWidth())
 	screenH := int(rl.GetScreenHeight())
 	barY := screenH - BarHeight
+	if !rl.IsWindowFullscreen() {
+		barY -= WindowedBarOffset
+	}
 
 	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(BarHeight), termBarColor)
 	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, termLineColor)
