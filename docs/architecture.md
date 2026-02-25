@@ -153,7 +153,12 @@ When the user types a line in the terminal that **does not** start with `cmd `, 
 
 ## Environment and API keys
 
-API keys are read from a **`.env`** file (gitignored). Copy `.env.example` to `.env` and set e.g. `OPENAI_API_KEY=sk-...` or `CURSOR_API_KEY=...`. If both are set, **Cursor** is used. The game loads `.env` from the working directory or `../../.env` when run from `cmd/game`. If no key is set, the game runs normally but natural-language input is only logged (no LLM call).
+API keys are read from a **`.env`** file. **`.env` is in `.gitignore`** — do not commit or push it; keep API keys local only.
+
+- Copy `.env.example` to `.env` and set e.g. `GROQ_API_KEY=...`, `OPENAI_API_KEY=...`, or `CURSOR_API_KEY=...`.
+- Priority: Groq (free) > Cursor > OpenAI. If both Cursor and OpenAI are set, Cursor is tried first and falls back to OpenAI on 404.
+- The game loads `.env` from the working directory or `../../.env` when run from `cmd/game`. If no key is set, the game runs normally but natural-language input is only logged (no LLM call).
+- **Never add API keys to the repository or to source code.**
 
 ---
 

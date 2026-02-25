@@ -20,7 +20,19 @@ Or from `cmd/game`:
 cd cmd/game && go run .
 ```
 
-Assets (e.g. skybox) are loaded from `assets/`; see [assets/README.md](assets/README.md). Logs are written under `cmd/game/logs/` when run from `cmd/game`. For **natural-language** (AI) commands, copy `.env.example` to `.env` and set `OPENAI_API_KEY`; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Natural language and AI agent).
+Assets (e.g. skybox) are loaded from `assets/`; see [assets/README.md](assets/README.md). Logs are written under `cmd/game/logs/` when run from `cmd/game`.
+
+---
+
+## API keys (natural-language / LLM)
+
+For **natural-language** commands (e.g. “spawn 10 cubes”), the game can call an LLM (Groq, OpenAI, or Cursor). Setup:
+
+1. Copy `.env.example` to `.env`: `cp .env.example .env`
+2. Edit `.env` and add your API key(s), e.g. `GROQ_API_KEY=...` or `OPENAI_API_KEY=...`
+3. **Do not commit or push `.env`** — it is listed in `.gitignore` so your keys stay local. Never add API keys to the repo or to code.
+
+Priority: Groq (free) > Cursor > OpenAI. Model: `cmd model <name>` (e.g. `cmd model llama-3.3-70b-versatile`). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Natural language and AI agent).
 
 ---
 
