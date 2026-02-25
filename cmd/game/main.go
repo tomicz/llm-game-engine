@@ -263,12 +263,13 @@ func main() {
 	term := terminal.New(log, reg)
 
 	// LLM + agent: natural language -> structured actions -> scene/commands.
-	// Priority: Groq (free), then Cursor (fallback to OpenAI if 404), then OpenAI.
+	// Priority: Groq (free) > Cursor (+ OpenAI fallback) > OpenAI > Ollama (local, e.g. Qwen 3 Coder).
 	var ag *agent.Agent
 	var client llm.Client
 	groqKey := os.Getenv("GROQ_API_KEY")
 	cursorKey := os.Getenv("CURSOR_API_KEY")
 	openAIKey := os.Getenv("OPENAI_API_KEY")
+	ollamaBase := os.Getenv("OLLAMA_BASE_URL")
 	switch {
 	case groqKey != "":
 		client = llm.NewGroq(groqKey)
@@ -278,6 +279,11 @@ func main() {
 		client = llm.NewCursor(cursorKey)
 	case openAIKey != "":
 		client = llm.NewOpenAI(openAIKey)
+	default:
+		client = llm.NewOllama(ollamaBase)
+		if currentAIModel == "" || currentAIModel == "gpt-4o-mini" {
+			currentAIModel = "qwen2.5-coder"
+		}
 	}
 	// Commands from the agent (e.g. window) must run on the main thread; queue them here.
 	pendingRunCmd := make(chan []string, 64)

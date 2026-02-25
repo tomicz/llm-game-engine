@@ -5,7 +5,517 @@ objects:
         - 0
         - 0
       scale:
-        - 20
-        - 20
-        - 20
+        - 50
+        - 50
+        - 50
       physics: false
+    - type: cylinder
+      position:
+        - -18.812794
+        - -508.91354
+        - -5.4980845
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - 4.865074
+        - -508.91354
+        - 7.311479
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -22.259712
+        - -508.91354
+        - -17.856636
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - -15.39081
+        - -508.91354
+        - -22.404253
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -2.8298557
+        - -508.91354
+        - 5.044791
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 4.288289
+        - -509.36356
+        - -20.802242
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - -21.259712
+        - -508.91354
+        - -18.062073
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - -6.7415075
+        - -509.36356
+        - -14.673909
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - 22.078201
+        - -508.91354
+        - -7.557577
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 1.5175909
+        - -508.91354
+        - 22.906076
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - 6.431407
+        - -508.91354
+        - -23.424816
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - 8.313459
+        - -508.91354
+        - -13.957821
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - 16.094059
+        - -508.91354
+        - 14.564005
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 2.8408856
+        - -508.91354
+        - -0.08839518
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 13.427507
+        - -508.91354
+        - 20.298216
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - -9.951494
+        - -508.91354
+        - -9.658396
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 18.278292
+        - -508.91354
+        - 20.541191
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - -15.4555645
+        - -509.36356
+        - -6.682241
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - -20.249441
+        - -508.91354
+        - -11.067489
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 24.126589
+        - -509.36356
+        - 12.030819
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -19.807932
+        - -508.91354
+        - 3.9544523
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -10.539937
+        - -508.91354
+        - 5.2679152
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - 8.944837
+        - -508.91354
+        - -2.2769988
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - -7.1136265
+        - -509.36356
+        - -6.3721404
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -6.982638
+        - -508.91354
+        - 6.0917826
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -12.572105
+        - -508.91354
+        - 2.6339145
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - -18.760468
+        - -509.36356
+        - -24.517527
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 8.568439
+        - -509.36356
+        - 16.097637
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - -15.92955
+        - -509.36356
+        - -14.805977
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 19.094934
+        - -508.91354
+        - -17.802494
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -17.530653
+        - -508.91354
+        - -0.11047274
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - -16.821062
+        - -508.91354
+        - -21.795187
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 22.602293
+        - -509.36356
+        - -14.203736
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - 4.5394955
+        - -508.91354
+        - 8.31148
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 23.09761
+        - -508.91354
+        - -9.435356
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 14.347002
+        - -509.36356
+        - 12.28492
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -8.735132
+        - -508.91354
+        - 15.169123
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 22.342686
+        - -508.91354
+        - 24.242205
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - -2.8395936
+        - -508.91354
+        - -8.6088
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 18.642437
+        - -509.36356
+        - 0.6788194
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - -3.967999
+        - -509.36356
+        - -21.62903
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 4.9070387
+        - -508.91354
+        - 5.7504535
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 2.8621821
+        - -508.91354
+        - 8.336306
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - 18.41447
+        - -508.91354
+        - -14.859584
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 9.78263
+        - -509.36356
+        - -11.407179
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 0.43574572
+        - -509.36356
+        - -6.846245
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: sphere
+      position:
+        - -24.177322
+        - -508.91354
+        - 24.318111
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: plane
+      position:
+        - 6.111419
+        - -509.36356
+        - 22.692913
+      scale:
+        - 1
+        - 0.1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - -8.359994
+        - -508.91354
+        - -20.387207
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cylinder
+      position:
+        - 14.643457
+        - -508.91354
+        - -23.87106
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
+    - type: cube
+      position:
+        - 0
+        - 0.55
+        - 0
+      scale:
+        - 1
+        - 1
+        - 1
+      physics: true
