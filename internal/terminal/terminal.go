@@ -79,6 +79,7 @@ func (t *Terminal) Update() {
 }
 
 // Draw draws the terminal bar at the bottom when open. Call after ClearBackground in the render loop.
+// Uses GetScreenWidth/GetScreenHeight so the bar matches the 2D overlay coordinate system (correct in fullscreen).
 func (t *Terminal) Draw() {
 	if !t.open {
 		return
