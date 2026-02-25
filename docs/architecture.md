@@ -53,7 +53,8 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 
 - **`cmd/game/`** — Entry point; `main()` wires logger, terminal, scene, and graphics.
 - **`internal/graphics/`** — Window, loop, clear. Calls `update`/`draw` each frame; no UI logic.
-- **`internal/scene/`** — 3D scene: Camera3D and free-camera update. Draw uses BeginMode3D and a custom **editor-style grid** on the XZ plane (minor/major lines every 1/10 units, extent ±50) plus X/Y/Z axis lines (red/green/blue) through the origin; see `drawEditorGrid()` in `scene.go`.
+- **`internal/scene/`** — 3D scene: Camera3D and free-camera update. Draw uses BeginMode3D, **scene objects** (loaded from YAML; see **3D primitives and scene YAML** below), and a custom **editor-style grid** on the XZ plane (minor/major lines every 1/10 units, extent ±50) plus X/Y/Z axis lines (red/green/blue) through the origin; see `drawEditorGrid()` in `scene.go`.
+- **`internal/primitives/`** — 3D primitive types (e.g. cube): registry, mesh cache (lazy after GL context), and draw. Scene objects reference types by name; no hardcoded primitives in the scene. See **3D primitives and scene YAML** below.
 - **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib). Submits lines starting with `cmd ` to the command registry; see **In-game command system** below.
 - **`internal/commands/`** — In-game command system: subcommand registry, flag parsing (Go `flag.FlagSet` per command), and execution. Commands and flags are defined in code; no external config file.
 - **`internal/debug/`** — Debugging overlays (e.g. FPS counter). All overlays are off by default; toggle via in-game terminal. See **Debug system** below.
@@ -62,8 +63,21 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/ui/`** — Primitive CSS-driven UI: parser, style resolution, and raylib draw. See **Primitive CSS UI system** below.
 - **`docs/`** — Documentation (e.g. this file).
 - **`assets/ui/`** — UI assets only (CSS files). Kept separate from other assets (skybox, etc.). See **Primitive CSS UI system** below.
+- **`assets/primitives/`** — Default primitive definitions (YAML): type, default size/color per primitive. See **3D primitives and scene YAML** below.
+- **`assets/scenes/`** — Scene files (YAML): list of object instances (type, position, scale). The scene loads one file (e.g. `default.yaml`) at startup and draws objects by metadata; not hardcoded.
 
 Graphics, scene UI, and terminal are separate: graphics owns the window and loop; scene owns 3D camera and world; **UI** draws scene-based overlays from CSS; **terminal** is the chat/LLM bar and draws on top of everything when enabled. Add more `internal/*` packages as needed (e.g. `internal/input`).
+
+---
+
+## 3D primitives and scene YAML
+
+**Scene data** is loaded from YAML (e.g. `assets/scenes/default.yaml`). The scene does not hardcode objects; it loads a list of **object instances** (type, position, optional scale) and draws each via **`internal/primitives/`**.
+
+- **Primitive types:** Registered in code (e.g. `cube` → raylib `GenMeshCube`). Mesh and material are created **lazily** on first draw so GPU resources exist after the window/OpenGL context is ready. More primitives (sphere, plane, etc.) can be added on demand.
+- **Default primitives folder:** `assets/primitives/` holds YAML files (e.g. `cube.yaml`) with type and default size/color. Used for defaults; mesh generation is driven by type name in the registry.
+- **Scene file format:** YAML with `objects:` — list of `type`, `position` [x,y,z], optional `scale` [x,y,z]. Example: one cube at center is `objects: [{ type: cube, position: [0,0,0], scale: [1,1,1] }]`.
+- **Parsing and persistence:** `gopkg.in/yaml.v3`; scene is loaded at startup from the first existing path in `scenePaths` (e.g. `assets/scenes/default.yaml`, `../../assets/scenes/default.yaml`). Saving the scene (e.g. from an editor) writes the same YAML format back. Scalable: add objects in YAML or new primitive types in code without changing the scene loader.
 
 ---
 

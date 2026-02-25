@@ -4,7 +4,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"game-engine/internal/primitives"
+
 	rl "github.com/gen2brain/raylib-go/raylib"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -26,12 +29,33 @@ var skyboxPaths = []string{
 	"../../assets/skybox/skybox.jpg",
 }
 
+// scenePaths are tried in order so the scene YAML is found whether run from repo root or cmd/game.
+var scenePaths = []string{
+	"assets/scenes/default.yaml",
+	"../../assets/scenes/default.yaml",
+}
+
+// SceneData is the YAML format for a scene: list of object instances.
+type SceneData struct {
+	Objects []ObjectInstance `yaml:"objects"`
+}
+
+// ObjectInstance describes one object in the scene: type (e.g. cube), position, optional scale.
+type ObjectInstance struct {
+	Type     string     `yaml:"type"`
+	Position [3]float32 `yaml:"position"`
+	Scale    [3]float32 `yaml:"scale,omitempty"`
+}
+
 // Scene holds a 3D camera and draws the 3D world. Update runs camera logic (e.g. free camera);
 // Draw renders between BeginMode3D and EndMode3D. Based on raylib examples/core/core_3d_camera_free.
 type Scene struct {
 	Camera      rl.Camera3D
 	cursorDone  bool
 	GridVisible bool
+	// Scene objects loaded from YAML; drawn each frame. Not hardcoded.
+	sceneData   SceneData
+	primitives  *primitives.Registry
 	// Skybox: optional texture drawn first in 3D mode. Cubemap or equirectangular panorama.
 	skyboxTex       rl.Texture2D
 	skyboxMesh      rl.Mesh
@@ -56,8 +80,35 @@ func New() *Scene {
 	s.Camera.Fovy = 45
 	s.Camera.Projection = rl.CameraPerspective
 	s.GridVisible = true
+	s.primitives = primitives.NewRegistry()
+	s.loadScene()
 	s.loadSkybox()
 	return s
+}
+
+// loadScene reads the scene from the first existing path in scenePaths and unmarshals into sceneData.
+// If no file is found or YAML is invalid, sceneData.Objects stays nil (no objects drawn).
+func (s *Scene) loadScene() {
+	var path string
+	for _, p := range scenePaths {
+		cleaned := filepath.Clean(p)
+		if _, err := os.Stat(cleaned); err == nil {
+			path = cleaned
+			break
+		}
+	}
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var sd SceneData
+	if err := yaml.Unmarshal(data, &sd); err != nil {
+		return
+	}
+	s.sceneData = sd
 }
 
 // equirectAspectMin/Max: width/height ratio for equirectangular panorama (typically 2:1).
@@ -192,6 +243,12 @@ func (s *Scene) Draw() {
 	rl.BeginMode3D(s.Camera)
 	if s.skyboxLoaded {
 		drawSkybox(s)
+	}
+	viewPos := [3]float32{s.Camera.Position.X, s.Camera.Position.Y, s.Camera.Position.Z}
+	lightDir := [3]float32{0.5, 1, 0.5} // direction to light (above-right), for primitive shading
+	s.primitives.SetView(viewPos, lightDir)
+	for _, obj := range s.sceneData.Objects {
+		s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
 	}
 	if s.GridVisible {
 		drawEditorGrid()

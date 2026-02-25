@@ -1,0 +1,4 @@
+# Default cube primitive. type is used by the engine to select mesh generation.
+type: cube
+size: [1, 1, 1]
+color: "#808080"
