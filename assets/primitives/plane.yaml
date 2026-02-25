@@ -1,0 +1,5 @@
+# Default plane (quad) primitive. type is used by the engine to select mesh generation.
+type: plane
+width: 1
+length: 1
+color: "#808080"

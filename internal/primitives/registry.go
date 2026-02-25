@@ -43,6 +43,10 @@ const defaultSphereSlices = 16
 // defaultCylinderSlices controls cylinder mesh resolution.
 const defaultCylinderSlices = 16
 
+// defaultPlaneResX/Z: 1 subdivision = single quad (1×1 in XZ).
+const defaultPlaneResX = 1
+const defaultPlaneResZ = 1
+
 // ensureCube creates the cube mesh and material if not yet cached.
 // Uses a simple lighting shader (directional light + ambient) so the cube has visible shading.
 func (r *Registry) ensureCube() {
@@ -96,6 +100,24 @@ func (r *Registry) ensureCylinder() {
 		mtl.Shader = shader
 	}
 	r.cache["cylinder"] = cached{mesh: mesh, mtl: mtl}
+}
+
+// ensurePlane creates the plane (quad) mesh and material if not yet cached.
+// 1×1 in XZ, centered at origin (raylib plane is centered). Reuses lit shader.
+func (r *Registry) ensurePlane() {
+	if _, ok := r.cache["plane"]; ok {
+		return
+	}
+	mesh := rl.GenMeshPlane(1, 1, defaultPlaneResX, defaultPlaneResZ)
+	mtl := rl.LoadMaterialDefault()
+	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = defaultPrimitiveColor
+	}
+	shader := loadLitShader()
+	if rl.IsShaderValid(shader) {
+		mtl.Shader = shader
+	}
+	r.cache["plane"] = cached{mesh: mesh, mtl: mtl}
 }
 
 // loadLitShader returns a shader that does simple directional light + ambient.
@@ -202,7 +224,7 @@ func (r *Registry) drawCached(key string, position, scale [3]float32, modelCente
 // Draw draws one instance of the given type at position with scale.
 // Must be called between BeginMode3D and EndMode3D.
 // SetView must be called once per frame before drawing so lit primitives get shading.
-// Unknown types are skipped. "cube", "sphere", and "cylinder" are created on first use.
+// Unknown types are skipped. "cube", "sphere", "cylinder", and "plane" are created on first use.
 func (r *Registry) Draw(primType string, position, scale [3]float32) {
 	switch primType {
 	case "cube":
@@ -215,6 +237,9 @@ func (r *Registry) Draw(primType string, position, scale [3]float32) {
 		r.ensureCylinder()
 		// Raylib cylinder: base Y=0, top Y=height. Offset -height/2 so center is at position.
 		r.drawCached("cylinder", position, scale, [3]float32{0, -0.5, 0})
+	case "plane":
+		r.ensurePlane()
+		r.drawCached("plane", position, scale, [3]float32{0, 0, 0})
 	default:
 		// Unknown type; skip. More primitives added later on demand.
 	}
