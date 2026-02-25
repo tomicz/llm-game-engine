@@ -33,8 +33,15 @@ func (r *Registry) SetView(viewPos, lightDir [3]float32) {
 	r.lightDir = lightDir
 }
 
-// defaultCubeColor is the albedo tint for the primitive cube (basic material).
-var defaultCubeColor = rl.NewColor(128, 128, 128, 255)
+// defaultPrimitiveColor is the albedo tint for cube and sphere (basic material).
+var defaultPrimitiveColor = rl.NewColor(128, 128, 128, 255)
+
+// defaultSphereRings and defaultSphereSlices control sphere mesh resolution.
+const defaultSphereRings = 16
+const defaultSphereSlices = 16
+
+// defaultCylinderSlices controls cylinder mesh resolution.
+const defaultCylinderSlices = 16
 
 // ensureCube creates the cube mesh and material if not yet cached.
 // Uses a simple lighting shader (directional light + ambient) so the cube has visible shading.
@@ -45,23 +52,60 @@ func (r *Registry) ensureCube() {
 	mesh := rl.GenMeshCube(1, 1, 1)
 	mtl := rl.LoadMaterialDefault()
 	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = defaultCubeColor
+		albedo.Color = defaultPrimitiveColor
 	}
-	shader := loadCubeLightingShader()
+	shader := loadLitShader()
 	if rl.IsShaderValid(shader) {
 		mtl.Shader = shader
 	}
 	r.cache["cube"] = cached{mesh: mesh, mtl: mtl}
 }
 
-// loadCubeLightingShader returns a shader that does simple directional light + ambient.
-// Uses same vertex attributes as raylib meshes: vertexPosition, vertexTexCoord, vertexNormal.
-func loadCubeLightingShader() rl.Shader {
-	return rl.LoadShaderFromMemory(cubeLightingVS, cubeLightingFS)
+// ensureSphere creates the sphere mesh and material if not yet cached.
+// Reuses the same lit shader as the cube.
+func (r *Registry) ensureSphere() {
+	if _, ok := r.cache["sphere"]; ok {
+		return
+	}
+	// Radius 0.5 so diameter = 1, matching cube side length (1) for same default size.
+	mesh := rl.GenMeshSphere(0.5, defaultSphereRings, defaultSphereSlices)
+	mtl := rl.LoadMaterialDefault()
+	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = defaultPrimitiveColor
+	}
+	shader := loadLitShader()
+	if rl.IsShaderValid(shader) {
+		mtl.Shader = shader
+	}
+	r.cache["sphere"] = cached{mesh: mesh, mtl: mtl}
+}
+
+// ensureCylinder creates the cylinder mesh and material if not yet cached.
+// Radius 0.5 and height 1 so diameter and height match cube side length (1). Reuses lit shader.
+func (r *Registry) ensureCylinder() {
+	if _, ok := r.cache["cylinder"]; ok {
+		return
+	}
+	mesh := rl.GenMeshCylinder(0.5, 1, defaultCylinderSlices)
+	mtl := rl.LoadMaterialDefault()
+	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = defaultPrimitiveColor
+	}
+	shader := loadLitShader()
+	if rl.IsShaderValid(shader) {
+		mtl.Shader = shader
+	}
+	r.cache["cylinder"] = cached{mesh: mesh, mtl: mtl}
+}
+
+// loadLitShader returns a shader that does simple directional light + ambient.
+// Used by cube and sphere. Same vertex attributes as raylib meshes: vertexPosition, vertexTexCoord, vertexNormal.
+func loadLitShader() rl.Shader {
+	return rl.LoadShaderFromMemory(litVS, litFS)
 }
 
 const (
-	cubeLightingVS = `#version 330
+	litVS = `#version 330
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;
@@ -79,7 +123,7 @@ void main() {
   gl_Position = matProjection * matView * worldPos;
 }
 `
-	cubeLightingFS = `#version 330
+	litFS = `#version 330
 in vec3 fragPosition;
 in vec2 fragTexCoord;
 in vec3 fragNormal;
@@ -103,45 +147,74 @@ void main() {
 // defaultAmbient is the ambient term for the cube lighting shader (dim so faces aren't black).
 var defaultAmbient = [4]float32{0.25, 0.25, 0.25, 1.0}
 
+// setLitShaderUniforms sets viewPos, lightDir, ambient on the given shader (cgo-safe: local arrays).
+func (r *Registry) setLitShaderUniforms(shader rl.Shader) {
+	if !rl.IsShaderValid(shader) {
+		return
+	}
+	viewPos := [3]float32{r.viewPos[0], r.viewPos[1], r.viewPos[2]}
+	lightDir := [3]float32{r.lightDir[0], r.lightDir[1], r.lightDir[2]}
+	amb := [4]float32{defaultAmbient[0], defaultAmbient[1], defaultAmbient[2], defaultAmbient[3]}
+	if loc := rl.GetShaderLocation(shader, "viewPos"); loc >= 0 {
+		rl.SetShaderValueV(shader, loc, viewPos[:], rl.ShaderUniformVec3, 1)
+	}
+	if loc := rl.GetShaderLocation(shader, "lightDir"); loc >= 0 {
+		rl.SetShaderValueV(shader, loc, lightDir[:], rl.ShaderUniformVec3, 1)
+	}
+	if loc := rl.GetShaderLocation(shader, "ambient"); loc >= 0 {
+		rl.SetShaderValueV(shader, loc, amb[:], rl.ShaderUniformVec4, 1)
+	}
+}
+
+// drawCached draws a cached mesh with the given key at position and scale (scale 0 → 1).
+// modelCenterOffset shifts the mesh in model space before scale/translate so the scene position
+// is the primitive's center. Use (0,0,0) for cube/sphere (already centered); (0,-0.5,0) for cylinder
+// (raylib cylinder has base at Y=0, top at Y=height, so offset -height/2 centers it).
+func (r *Registry) drawCached(key string, position, scale [3]float32, modelCenterOffset [3]float32) {
+	c, ok := r.cache[key]
+	if !ok {
+		return
+	}
+	r.setLitShaderUniforms(c.mtl.Shader)
+	sx, sy, sz := scale[0], scale[1], scale[2]
+	if sx == 0 {
+		sx = 1
+	}
+	if sy == 0 {
+		sy = 1
+	}
+	if sz == 0 {
+		sz = 1
+	}
+	scaleM := rl.MatrixScale(sx, sy, sz)
+	transM := rl.MatrixTranslate(position[0], position[1], position[2])
+	var transform rl.Matrix
+	if modelCenterOffset[0] != 0 || modelCenterOffset[1] != 0 || modelCenterOffset[2] != 0 {
+		offsetM := rl.MatrixTranslate(modelCenterOffset[0], modelCenterOffset[1], modelCenterOffset[2])
+		// Order: offset (center mesh), then scale, then translate to position.
+		transform = rl.MatrixMultiply(rl.MatrixMultiply(transM, scaleM), offsetM)
+	} else {
+		transform = rl.MatrixMultiply(scaleM, transM)
+	}
+	rl.DrawMesh(c.mesh, c.mtl, transform)
+}
+
 // Draw draws one instance of the given type at position with scale.
 // Must be called between BeginMode3D and EndMode3D.
 // SetView must be called once per frame before drawing so lit primitives get shading.
-// Unknown types are skipped. For "cube", mesh is created on first use.
+// Unknown types are skipped. "cube", "sphere", and "cylinder" are created on first use.
 func (r *Registry) Draw(primType string, position, scale [3]float32) {
 	switch primType {
 	case "cube":
 		r.ensureCube()
-		c := r.cache["cube"]
-		shader := c.mtl.Shader
-		if rl.IsShaderValid(shader) {
-			// Copy to local arrays so cgo doesn't receive Go pointers into struct (avoids panic).
-			viewPos := [3]float32{r.viewPos[0], r.viewPos[1], r.viewPos[2]}
-			lightDir := [3]float32{r.lightDir[0], r.lightDir[1], r.lightDir[2]}
-			amb := [4]float32{defaultAmbient[0], defaultAmbient[1], defaultAmbient[2], defaultAmbient[3]}
-			if loc := rl.GetShaderLocation(shader, "viewPos"); loc >= 0 {
-				rl.SetShaderValueV(shader, loc, viewPos[:], rl.ShaderUniformVec3, 1)
-			}
-			if loc := rl.GetShaderLocation(shader, "lightDir"); loc >= 0 {
-				rl.SetShaderValueV(shader, loc, lightDir[:], rl.ShaderUniformVec3, 1)
-			}
-			if loc := rl.GetShaderLocation(shader, "ambient"); loc >= 0 {
-				rl.SetShaderValueV(shader, loc, amb[:], rl.ShaderUniformVec4, 1)
-			}
-		}
-		sx, sy, sz := scale[0], scale[1], scale[2]
-		if sx == 0 {
-			sx = 1
-		}
-		if sy == 0 {
-			sy = 1
-		}
-		if sz == 0 {
-			sz = 1
-		}
-		scaleM := rl.MatrixScale(sx, sy, sz)
-		transM := rl.MatrixTranslate(position[0], position[1], position[2])
-		transform := rl.MatrixMultiply(scaleM, transM)
-		rl.DrawMesh(c.mesh, c.mtl, transform)
+		r.drawCached("cube", position, scale, [3]float32{0, 0, 0})
+	case "sphere":
+		r.ensureSphere()
+		r.drawCached("sphere", position, scale, [3]float32{0, 0, 0})
+	case "cylinder":
+		r.ensureCylinder()
+		// Raylib cylinder: base Y=0, top Y=height. Offset -height/2 so center is at position.
+		r.drawCached("cylinder", position, scale, [3]float32{0, -0.5, 0})
 	default:
 		// Unknown type; skip. More primitives added later on demand.
 	}

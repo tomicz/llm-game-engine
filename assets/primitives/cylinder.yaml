@@ -1,0 +1,5 @@
+# Default cylinder primitive. type is used by the engine to select mesh generation.
+type: cylinder
+radius: 0.5
+height: 1
+color: "#808080"

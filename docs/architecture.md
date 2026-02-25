@@ -74,9 +74,11 @@ Graphics, scene UI, and terminal are separate: graphics owns the window and loop
 
 **Scene data** is loaded from YAML (e.g. `assets/scenes/default.yaml`). The scene does not hardcode objects; it loads a list of **object instances** (type, position, optional scale) and draws each via **`internal/primitives/`**.
 
-- **Primitive types:** Registered in code (e.g. `cube` → raylib `GenMeshCube`). Mesh and material are created **lazily** on first draw so GPU resources exist after the window/OpenGL context is ready. More primitives (sphere, plane, etc.) can be added on demand.
-- **Default primitives folder:** `assets/primitives/` holds YAML files (e.g. `cube.yaml`) with type and default size/color. Used for defaults; mesh generation is driven by type name in the registry.
-- **Scene file format:** YAML with `objects:` — list of `type`, `position` [x,y,z], optional `scale` [x,y,z]. Example: one cube at center is `objects: [{ type: cube, position: [0,0,0], scale: [1,1,1] }]`.
+- **Primitive types:** Registered in code: `cube`, `sphere`, `cylinder` (raylib `GenMeshCube`, `GenMeshSphere`, `GenMeshCylinder`). Mesh and material are created **lazily** on first draw so GPU resources exist after the window/OpenGL context is ready. More primitives (plane, cone, etc.) can be added on demand.
+- **Default size:** Cube 1×1×1, sphere diameter 1 (radius 0.5), cylinder diameter 1 and height 1 (radius 0.5). All share the same 1-unit extent for consistent defaults.
+- **Origin at center:** Scene `position` is the **center** of each primitive. Cube and sphere meshes are already centered; the cylinder (raylib: base Y=0, top Y=height) gets a model-space offset so its center is at `position`.
+- **Default primitives folder:** `assets/primitives/` holds YAML files (e.g. `cube.yaml`, `sphere.yaml`, `cylinder.yaml`) with type and default size/color. Used for defaults; mesh generation is driven by type name in the registry.
+- **Scene file format:** YAML with `objects:` — list of `type`, `position` [x,y,z], optional `scale` [x,y,z]. Example: cube at center, sphere and cylinder beside it: `objects: [{ type: cube, position: [0,0,0], scale: [1,1,1] }, ...]`.
 - **Parsing and persistence:** `gopkg.in/yaml.v3`; scene is loaded at startup from the first existing path in `scenePaths` (e.g. `assets/scenes/default.yaml`, `../../assets/scenes/default.yaml`). Saving the scene (e.g. from an editor) writes the same YAML format back. Scalable: add objects in YAML or new primitive types in code without changing the scene loader.
 
 ---

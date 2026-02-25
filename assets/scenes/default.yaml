@@ -3,3 +3,9 @@ objects:
   - type: cube
     position: [0, 0, 0]
     scale: [1, 1, 1]
+  - type: sphere
+    position: [2.5, 0, 0]
+    scale: [1, 1, 1]
+  - type: cylinder
+    position: [-2.5, 0, 0]
+    scale: [1, 1, 1]

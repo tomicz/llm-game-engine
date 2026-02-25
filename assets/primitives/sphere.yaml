@@ -1,0 +1,4 @@
+# Default sphere primitive. type is used by the engine to select mesh generation.
+type: sphere
+radius: 0.5
+color: "#808080"
