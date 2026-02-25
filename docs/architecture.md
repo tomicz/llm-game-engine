@@ -98,8 +98,10 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `fps` | `--hide` | Hide the FPS counter. |
 | `memalloc` | `--show` | Show memory allocation (under FPS, green). Off by default. |
 | `memalloc` | `--hide` | Hide the memory allocation display. |
+| `window` | `--fullscreen` | Switch to fullscreen. |
+| `window` | `--windowed` | Switch to windowed mode. |
 
-Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage.
+Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage; `cmd window --windowed` to switch to windowed mode; `cmd window --fullscreen` to switch back to fullscreen.
 
 ---
 

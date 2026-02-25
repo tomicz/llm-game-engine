@@ -97,6 +97,27 @@ func main() {
 		return nil
 	})
 
+	// window: --fullscreen / --windowed to switch display mode (raylib ToggleFullscreen when needed).
+	var wantFullscreen, wantWindowed bool
+	windowFS := flag.NewFlagSet("window", flag.ContinueOnError)
+	windowFS.BoolVar(&wantFullscreen, "fullscreen", false, "switch to fullscreen")
+	windowFS.BoolVar(&wantWindowed, "windowed", false, "switch to windowed")
+	reg.Register("window", windowFS, func() error {
+		f, w := wantFullscreen, wantWindowed
+		wantFullscreen, wantWindowed = false, false
+		if f == w {
+			return nil // no change if both or neither set
+		}
+		isFull := rl.IsWindowFullscreen()
+		if f && !isFull {
+			rl.ToggleFullscreen()
+		}
+		if w && isFull {
+			rl.ToggleFullscreen()
+		}
+		return nil
+	})
+
 	term := terminal.New(logger, reg)
 
 	// UI: CSS-driven overlay (scene UI). Renders after debug, before terminal.
