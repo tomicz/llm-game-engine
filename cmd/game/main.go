@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"game-engine/internal/agent"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
 	"game-engine/internal/engineconfig"
+	"game-engine/internal/env"
 	"game-engine/internal/graphics"
+	"game-engine/internal/llm"
 	"game-engine/internal/logger"
 	"game-engine/internal/scene"
 	"game-engine/internal/terminal"
@@ -21,29 +25,43 @@ import (
 )
 
 func main() {
+	// Load .env from repo root or cmd/game so API keys are available
+	_ = env.Load(".env")
+	_ = env.Load("../../.env")
+
 	// Optional: enable heap/CPU profiling. Run with DEBUG_PPROF=1, then e.g. go tool pprof -http=:8080 http://localhost:6060/debug/pprof/heap
 	if os.Getenv("DEBUG_PPROF") == "1" {
 		go func() { _ = http.ListenAndServe("localhost:6060", nil) }()
 	}
 
-	logger := logger.New()
-	rl.SetTraceLogCallback(logger.LogEngine) // capture raylib INFO/WARNING/ERROR to engine_log.txt
+	log := logger.New()
+	rl.SetTraceLogCallback(log.LogEngine) // capture raylib INFO/WARNING/ERROR to engine_log.txt
 
 	scn := scene.New()
 	dbg := debug.New()
 	reg := commands.NewRegistry()
 
-	// Apply persisted engine prefs (debug overlays, grid). Save on every toggle.
+	// Apply persisted engine prefs (debug overlays, grid, AI model). Save on every toggle.
 	prefs, _ := engineconfig.Load()
 	dbg.SetShowFPS(prefs.ShowFPS)
 	dbg.SetShowMemAlloc(prefs.ShowMemAlloc)
 	scn.SetGridVisible(prefs.GridVisible)
+	currentAIModel := prefs.AIModel
+	if currentAIModel == "" {
+		currentAIModel = "gpt-4o-mini"
+	}
 	saveEnginePrefs := func() {
 		_ = engineconfig.Save(engineconfig.EnginePrefs{
 			ShowFPS:      dbg.ShowFPS,
 			ShowMemAlloc: dbg.ShowMemAlloc,
 			GridVisible:  scn.GridVisible,
+			AIModel:      currentAIModel,
 		})
+	}
+	// If only Groq is configured, default to a Groq model so natural language works without cmd model.
+	if os.Getenv("GROQ_API_KEY") != "" && (currentAIModel == "" || currentAIModel == "gpt-4o-mini") {
+		currentAIModel = "llama-3.3-70b-versatile"
+		saveEnginePrefs()
 	}
 
 	// grid: --show / --hide to show or hide the editor grid
@@ -170,6 +188,18 @@ func main() {
 		return scn.NewScene()
 	})
 
+	// model: set AI model for natural-language commands. Usage: cmd model <name> (e.g. cmd model gpt-4o-mini)
+	modelFS := flag.NewFlagSet("model", flag.ContinueOnError)
+	reg.Register("model", modelFS, func() error {
+		args := modelFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd model <name> (e.g. cmd model gpt-4o-mini)")
+		}
+		currentAIModel = args[0]
+		saveEnginePrefs()
+		return nil
+	})
+
 	// physics: enable or disable falling/collision for the selected object. Usage: cmd physics on | cmd physics off
 	physicsFS := flag.NewFlagSet("physics", flag.ContinueOnError)
 	reg.Register("physics", physicsFS, func() error {
@@ -187,7 +217,40 @@ func main() {
 		}
 	})
 
-	term := terminal.New(logger, reg)
+	term := terminal.New(log, reg)
+
+	// LLM + agent: natural language -> structured actions -> scene/commands.
+	// Priority: Groq (free), then Cursor (fallback to OpenAI if 404), then OpenAI.
+	var ag *agent.Agent
+	var client llm.Client
+	groqKey := os.Getenv("GROQ_API_KEY")
+	cursorKey := os.Getenv("CURSOR_API_KEY")
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+	switch {
+	case groqKey != "":
+		client = llm.NewGroq(groqKey)
+	case cursorKey != "" && openAIKey != "":
+		client = &llm.Fallback{Primary: llm.NewCursor(cursorKey), Secondary: llm.NewOpenAI(openAIKey)}
+	case cursorKey != "":
+		client = llm.NewCursor(cursorKey)
+	case openAIKey != "":
+		client = llm.NewOpenAI(openAIKey)
+	}
+	if client != nil {
+		ag = agent.New(client, func() string { return currentAIModel })
+		agent.RegisterSceneHandlers(ag, scn, reg)
+	}
+	if ag != nil {
+		term.OnNaturalLanguage = func(line string) {
+			log.Log("Thinking…")
+			summary, err := ag.Run(context.Background(), line)
+			if err != nil {
+				log.Log(err.Error())
+			} else {
+				log.Log(summary)
+			}
+		}
+	}
 
 	// UI: CSS-driven overlay (scene UI). Renders after debug, before terminal.
 	uiEngine := ui.New()

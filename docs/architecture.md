@@ -55,10 +55,13 @@ Packages under **`internal/`** cannot be imported from outside your module. Use 
 - **`internal/graphics/`** — Window, loop, clear. Calls `update`/`draw` each frame; no UI logic.
 - **`internal/scene/`** — 3D scene: Camera3D and free-camera update. Draw uses BeginMode3D, **scene objects** (loaded from YAML; see **3D primitives and scene YAML** below), and a custom **editor-style grid** on the XZ plane (minor/major lines every 1/10 units, extent ±50) plus X/Y/Z axis lines (red/green/blue) through the origin; see `drawEditorGrid()` in `scene.go`.
 - **`internal/primitives/`** — 3D primitive types (e.g. cube): registry, mesh cache (lazy after GL context), and draw. Scene objects reference types by name; no hardcoded primitives in the scene. See **3D primitives and scene YAML** below.
-- **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib). Submits lines starting with `cmd ` to the command registry; see **In-game command system** below.
+- **`internal/terminal/`** — Chat/terminal bar: input handling and drawing (uses logger and raylib). Lines starting with `cmd ` go to the command registry; other lines are natural language and, when an LLM is configured, are sent to **`internal/agent/`** (see **Natural language and AI agent** below).
 - **`internal/commands/`** — In-game command system: subcommand registry, flag parsing (Go `flag.FlagSet` per command), and execution. Commands and flags are defined in code; no external config file.
 - **`internal/debug/`** — Debugging overlays (e.g. FPS counter). All overlays are off by default; toggle via in-game terminal. See **Debug system** below.
-- **`internal/engineconfig/`** — Engine-only preferences (debug overlays, grid visibility). Persisted to `config/engine.json`; loaded at startup, saved on every toggle. See **Engine config persistence** below.
+- **`internal/engineconfig/`** — Engine-only preferences (debug overlays, grid visibility, AI model). Persisted to `config/engine.json`; loaded at startup, saved on every toggle. See **Engine config persistence** below.
+- **`internal/llm/`** — LLM client interface and implementations: **OpenAI** (Bearer token), **Cursor** (Basic auth, API key as username). Used by the agent for natural-language completion. If both `CURSOR_API_KEY` and `OPENAI_API_KEY` are set, Cursor is used.
+- **`internal/agent/`** — Natural-language handler: sends user message to the LLM, parses JSON `actions`, and applies them via a registry of handlers (e.g. `add_object` → scene, `run_cmd` → command registry). Extensible: new action types = new handlers.
+- **`internal/env/`** — Loads `.env` (API keys) at startup; `.env` is gitignored.
 - **`internal/logger/`** — Terminal lines (memory + file), engine/raylib log to file. See **Log files** below.
 - **`internal/ui/`** — Primitive CSS-driven UI: parser, style resolution, and raylib draw. See **Primitive CSS UI system** below.
 - **`docs/`** — Documentation (e.g. this file).
@@ -132,8 +135,25 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `spawn` | `<type> <x> <y> <z> [sx sy sz]` | Add a primitive (cube, sphere, cylinder, plane) at position; optional scale. |
 | `save` | *(none)* | Write current scene (including runtime-spawned objects) to the scene YAML file. |
 | `newscene` | *(none)* | Clear all primitives and save an empty scene. |
+| `model` | `<name>` | Set AI model for natural-language commands (e.g. `cmd model gpt-4o-mini`). Persisted in engine config. |
 
 Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage; `cmd window --windowed` to switch to windowed mode; `cmd window --fullscreen` to switch back to fullscreen.
+
+---
+
+## Natural language and AI agent
+
+When the user types a line in the terminal that **does not** start with `cmd `, it is treated as **natural language**. If an API key is configured (see **Environment and API keys** below), the line is sent to an LLM; the reply is parsed as JSON with an `actions` array; each action is applied via a **handler registry** (same internal APIs that commands use). The LLM never “types” into the terminal; the engine updates the game by calling e.g. `scene.AddPrimitive` or `reg.Execute` in a loop.
+
+- **Flow:** Terminal (non-cmd line) → log line → goroutine calls agent → LLM client (model from `cmd model`) → parse JSON → for each action, dispatch to registered handler → log summary or error.
+- **Actions (extensible):** `add_object` (type, position, scale) → scene; `run_cmd` (args) → command registry. New action types = new handlers in `internal/agent/`.
+- **Model selection:** `cmd model <name>` (e.g. `cmd model gpt-4o-mini`). Persisted in `config/engine.json`.
+
+---
+
+## Environment and API keys
+
+API keys are read from a **`.env`** file (gitignored). Copy `.env.example` to `.env` and set e.g. `OPENAI_API_KEY=sk-...` or `CURSOR_API_KEY=...`. If both are set, **Cursor** is used. The game loads `.env` from the working directory or `../../.env` when run from `cmd/game`. If no key is set, the game runs normally but natural-language input is only logged (no LLM call).
 
 ---
 
@@ -169,7 +189,7 @@ The debug system is drawn after the 3D scene and before the terminal in the main
 **`internal/engineconfig/`** persists engine-only preferences across runs. This is **not** for in-game save data (that is a separate, future system).
 
 - **File:** `config/engine.json` (relative to the process working directory; e.g. `cmd/game/config/` when run from repo root). The directory is created on first save.
-- **Contents:** `show_fps`, `show_memalloc`, `grid_visible` (JSON booleans). Defaults when the file is missing: FPS and memalloc off, grid on.
+- **Contents:** `show_fps`, `show_memalloc`, `grid_visible` (JSON booleans), `ai_model` (string, e.g. `gpt-4o-mini`). Defaults when the file is missing: FPS and memalloc off, grid on, AI model `gpt-4o-mini`.
 - **Load:** At startup, `engineconfig.Load()` is called; the returned prefs are applied to the debug and scene (e.g. `dbg.SetShowFPS(prefs.ShowFPS)`). If the file is missing or invalid, defaults are used.
 - **Save:** After every `grid`, `fps`, or `memalloc` command that changes state, the current debug and scene state is written to `config/engine.json`. Saving on each toggle keeps state in sync even if the game exits without a clean shutdown.
 

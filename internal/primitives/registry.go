@@ -153,23 +153,44 @@ uniform vec4 colDiffuse;
 uniform vec3 viewPos;
 uniform vec3 lightDir;
 uniform vec4 ambient;
+uniform vec3 lightColor;
+uniform float lightIntensity;
+uniform float specularPower;
+uniform float specularStrength;
 out vec4 finalColor;
 void main() {
   vec4 tint = colDiffuse;
   vec3 N = normalize(fragNormal);
   vec3 L = normalize(lightDir);
+  vec3 V = normalize(viewPos - fragPosition);
   float NdotL = max(dot(N, L), 0.0);
-  vec3 diffuse = tint.rgb * NdotL;
+  vec3 diffuse = tint.rgb * NdotL * lightColor * lightIntensity;
   vec3 amb = ambient.rgb * tint.rgb;
-  finalColor = vec4(amb + diffuse, tint.a);
+  vec3 H = normalize(L + V);
+  float NdotH = max(dot(N, H), 0.0);
+  float spec = pow(NdotH, specularPower) * specularStrength;
+  vec3 specular = lightColor * spec * (NdotL > 0.0 ? 1.0 : 0.0);
+  finalColor = vec4(amb + diffuse + specular, tint.a);
 }
 `
 )
 
-// defaultAmbient is the ambient term for the cube lighting shader (dim so faces aren't black).
-var defaultAmbient = [4]float32{0.25, 0.25, 0.25, 1.0}
+// defaultAmbient is the ambient term (dim so shadowed areas aren't pure black).
+var defaultAmbient = [4]float32{0.2, 0.22, 0.26, 1.0}
 
-// setLitShaderUniforms sets viewPos, lightDir, ambient on the given shader (cgo-safe: local arrays).
+// defaultLightColor is a soft warm-white for the directional light.
+var defaultLightColor = [3]float32{1.0, 0.98, 0.95}
+
+// defaultLightIntensity scales the directional diffuse (0–1).
+const defaultLightIntensity = float32(0.75)
+
+// defaultSpecularPower controls highlight tightness (higher = smaller, sharper highlight).
+const defaultSpecularPower = float32(48.0)
+
+// defaultSpecularStrength scales specular contribution (0–1).
+const defaultSpecularStrength = float32(0.35)
+
+// setLitShaderUniforms sets viewPos, lightDir, ambient, light color/intensity, and specular on the given shader (cgo-safe: local arrays).
 func (r *Registry) setLitShaderUniforms(shader rl.Shader) {
 	if !rl.IsShaderValid(shader) {
 		return
@@ -177,6 +198,7 @@ func (r *Registry) setLitShaderUniforms(shader rl.Shader) {
 	viewPos := [3]float32{r.viewPos[0], r.viewPos[1], r.viewPos[2]}
 	lightDir := [3]float32{r.lightDir[0], r.lightDir[1], r.lightDir[2]}
 	amb := [4]float32{defaultAmbient[0], defaultAmbient[1], defaultAmbient[2], defaultAmbient[3]}
+	lightColor := [3]float32{defaultLightColor[0], defaultLightColor[1], defaultLightColor[2]}
 	if loc := rl.GetShaderLocation(shader, "viewPos"); loc >= 0 {
 		rl.SetShaderValueV(shader, loc, viewPos[:], rl.ShaderUniformVec3, 1)
 	}
@@ -185,6 +207,18 @@ func (r *Registry) setLitShaderUniforms(shader rl.Shader) {
 	}
 	if loc := rl.GetShaderLocation(shader, "ambient"); loc >= 0 {
 		rl.SetShaderValueV(shader, loc, amb[:], rl.ShaderUniformVec4, 1)
+	}
+	if loc := rl.GetShaderLocation(shader, "lightColor"); loc >= 0 {
+		rl.SetShaderValueV(shader, loc, lightColor[:], rl.ShaderUniformVec3, 1)
+	}
+	if loc := rl.GetShaderLocation(shader, "lightIntensity"); loc >= 0 {
+		rl.SetShaderValueFloat(shader, loc, defaultLightIntensity)
+	}
+	if loc := rl.GetShaderLocation(shader, "specularPower"); loc >= 0 {
+		rl.SetShaderValueFloat(shader, loc, defaultSpecularPower)
+	}
+	if loc := rl.GetShaderLocation(shader, "specularStrength"); loc >= 0 {
+		rl.SetShaderValueFloat(shader, loc, defaultSpecularStrength)
 	}
 }
 

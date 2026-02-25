@@ -24,11 +24,13 @@ var (
 // Terminal is the chat/terminal input bar at the bottom of the screen. It is shown/hidden with ESC.
 // When open, it handles typing and drawing; when closed, nothing is drawn and the player can move (WASD).
 // Lines starting with "cmd " are parsed as subcommand + flags and executed via the command registry.
+// Other lines are treated as natural language; if OnNaturalLanguage is set, it is called in a goroutine.
 type Terminal struct {
-	log      *logger.Logger
-	reg      *commands.Registry
-	inputBuf string
-	open     bool
+	log                *logger.Logger
+	reg                *commands.Registry
+	inputBuf           string
+	open               bool
+	OnNaturalLanguage  func(line string) // called in a goroutine when user submits a non-cmd line
 }
 
 // New returns a new Terminal that logs lines and runs "cmd ..." through reg. It starts closed (hidden); press ESC to open.
@@ -74,6 +76,11 @@ func (t *Terminal) Update() {
 			if err := t.reg.Execute(args); err != nil {
 				t.log.Log(err.Error())
 			}
+		} else if t.OnNaturalLanguage != nil {
+			t.log.Log(line)
+			go t.OnNaturalLanguage(line)
+		} else {
+			t.log.Log(line)
 		}
 	}
 }

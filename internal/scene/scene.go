@@ -94,7 +94,8 @@ type Scene struct {
 // Tries to load skybox from assets/skybox/ (see skyboxPaths); see assets/README.md.
 func New() *Scene {
 	s := &Scene{}
-	s.Camera.Position = rl.NewVector3(10, 10, 10)
+	// Slightly off from center so the initial view isn't perfectly symmetric.
+	s.Camera.Position = rl.NewVector3(11, 10.5, 9.5)
 	s.Camera.Target = rl.NewVector3(0, 0, 0)
 	s.Camera.Up = rl.NewVector3(0, 1, 0)
 	s.Camera.Fovy = 45
@@ -141,10 +142,30 @@ func (s *Scene) AddObject(obj ObjectInstance) {
 	s.sceneData.Objects = append(s.sceneData.Objects, obj)
 }
 
+// planeDefaultScaleY is the default Y scale (height) for plane primitives so they render and collide as a thin slab.
+const planeDefaultScaleY = 0.1
+
 // AddPrimitive adds a primitive with the given position and scale. Default scale is [1,1,1].
-// Position is the center of the primitive.
+// Plane uses Y scale 0.1 by default when scale[1] is 1. Position is the center of the primitive. Physics defaults to on.
 func (s *Scene) AddPrimitive(typ string, position, scale [3]float32) {
+	scale = applyPlaneDefaultScale(typ, scale)
 	s.AddObject(ObjectInstance{Type: typ, Position: position, Scale: scale})
+}
+
+// AddPrimitiveWithPhysics adds a primitive with the given position, scale, and physics flag.
+// physics false = static (no gravity, still blocks others); true = falls and collides.
+// Plane uses Y scale 0.1 by default when scale[1] is 1.
+func (s *Scene) AddPrimitiveWithPhysics(typ string, position, scale [3]float32, physics bool) {
+	scale = applyPlaneDefaultScale(typ, scale)
+	s.AddObject(ObjectInstance{Type: typ, Position: position, Scale: scale, Physics: &physics})
+}
+
+// applyPlaneDefaultScale returns scale with Y set to planeDefaultScaleY when typ is "plane" and scale[1] is 1.
+func applyPlaneDefaultScale(typ string, scale [3]float32) [3]float32 {
+	if typ == "plane" && scale[1] == 1 {
+		scale[1] = planeDefaultScaleY
+	}
+	return scale
 }
 
 // SelectedIndex returns the index of the selected object, or -1 if none.
@@ -239,13 +260,12 @@ func (s *Scene) loadSkybox() {
 
 // ensureSkyboxLoaded runs the first time we Draw with a pending skybox; it loads GPU resources
 // (texture, mesh, material, shader) so that LoadTexture/LoadTextureCubemap run after the window/GL context exists.
+// Only clears pending/path on success so a failed load (e.g. GL not ready on first frame) will retry next frame.
 func (s *Scene) ensureSkyboxLoaded() {
 	if !s.skyboxPending || s.skyboxPath == "" {
 		return
 	}
 	path := s.skyboxPath
-	s.skyboxPending = false
-	s.skyboxPath = ""
 
 	if !s.skyboxEquirect {
 		img := rl.LoadImage(path)
@@ -260,6 +280,8 @@ func (s *Scene) ensureSkyboxLoaded() {
 		s.skyboxMesh = rl.GenMeshCube(1, 1, 1)
 		s.skyboxMtl = rl.LoadMaterialDefault()
 		rl.SetMaterialTexture(&s.skyboxMtl, rl.MapCubemap, s.skyboxTex)
+		s.skyboxPending = false
+		s.skyboxPath = ""
 		s.skyboxLoaded = true
 		return
 	}
@@ -279,6 +301,8 @@ func (s *Scene) ensureSkyboxLoaded() {
 	s.skyboxCamPosLoc = rl.GetShaderLocation(shader, "cameraPosition")
 	s.skyboxTexLoc = rl.GetShaderLocation(shader, "skybox")
 	s.skyboxShader = shader
+	s.skyboxPending = false
+	s.skyboxPath = ""
 	s.skyboxLoaded = true
 }
 
@@ -328,7 +352,7 @@ func (s *Scene) ensurePhysicsBodies() {
 	for len(s.physicsWorld.Bodies) < len(objs) {
 		i := len(s.physicsWorld.Bodies)
 		obj := objs[i]
-		scale := scaleForPhysics(obj.Scale)
+		scale := scaleForPhysicsBody(obj)
 		static := !physicsEnabled(obj)
 		s.physicsWorld.AddBody(physics.NewBody(obj.Position, scale, 1, static))
 	}
@@ -363,13 +387,22 @@ func scaleForPhysics(s [3]float32) [3]float32 {
 	return out
 }
 
+// scaleForPhysicsBody returns the scale used for the physics AABB. Planes use Y = planeDefaultScaleY (0.1) for a thin collider.
+func scaleForPhysicsBody(obj ObjectInstance) [3]float32 {
+	s := scaleForPhysics(obj.Scale)
+	if obj.Type == "plane" {
+		s[1] = planeDefaultScaleY
+	}
+	return s
+}
+
 // syncSceneToPhysics copies each scene object's position, scale, and physics flag into the corresponding physics body.
 func (s *Scene) syncSceneToPhysics() {
 	bodies := s.physicsWorld.Bodies
 	objs := s.sceneData.Objects
 	for i := 0; i < len(bodies) && i < len(objs); i++ {
 		bodies[i].Position = objs[i].Position
-		bodies[i].Scale = scaleForPhysics(objs[i].Scale)
+		bodies[i].Scale = scaleForPhysicsBody(objs[i])
 		bodies[i].Static = !physicsEnabled(objs[i])
 	}
 }

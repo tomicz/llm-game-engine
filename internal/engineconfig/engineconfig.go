@@ -9,12 +9,13 @@ import (
 // EngineConfigPath is the path to the engine config file, relative to the process working directory.
 const EngineConfigPath = "config/engine.json"
 
-// EnginePrefs holds engine-only preferences (debug overlays, grid, etc.). Persisted across runs.
+// EnginePrefs holds engine-only preferences (debug overlays, grid, AI model, etc.). Persisted across runs.
 // In-game save data is separate and handled elsewhere.
 type EnginePrefs struct {
-	ShowFPS      bool `json:"show_fps"`
-	ShowMemAlloc bool `json:"show_memalloc"`
-	GridVisible  bool `json:"grid_visible"`
+	ShowFPS      bool   `json:"show_fps"`
+	ShowMemAlloc bool   `json:"show_memalloc"`
+	GridVisible  bool   `json:"grid_visible"`
+	AIModel      string `json:"ai_model,omitempty"`
 }
 
 // Default returns default engine preferences (debug overlays off, grid on).
@@ -23,6 +24,7 @@ func Default() EnginePrefs {
 		ShowFPS:      false,
 		ShowMemAlloc: false,
 		GridVisible:  true,
+		AIModel:      "gpt-4o-mini",
 	}
 }
 

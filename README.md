@@ -20,7 +20,7 @@ Or from `cmd/game`:
 cd cmd/game && go run .
 ```
 
-Assets (e.g. skybox) are loaded from `assets/`; see [assets/README.md](assets/README.md). Logs are written under `cmd/game/logs/` when run from `cmd/game`.
+Assets (e.g. skybox) are loaded from `assets/`; see [assets/README.md](assets/README.md). Logs are written under `cmd/game/logs/` when run from `cmd/game`. For **natural-language** (AI) commands, copy `.env.example` to `.env` and set `OPENAI_API_KEY`; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Natural language and AI agent).
 
 ---
 
