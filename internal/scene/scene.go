@@ -1,9 +1,11 @@
 package scene
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
+	"game-engine/internal/physics"
 	"game-engine/internal/primitives"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -45,10 +47,12 @@ type SceneData struct {
 }
 
 // ObjectInstance describes one object in the scene: type (e.g. cube), position, optional scale.
+// Physics: nil or true = falls and collides; false = static (no gravity, still blocks others). Omit in YAML = physics on.
 type ObjectInstance struct {
 	Type     string     `yaml:"type"`
 	Position [3]float32 `yaml:"position"`
 	Scale    [3]float32 `yaml:"scale,omitempty"`
+	Physics  *bool      `yaml:"physics,omitempty"`
 }
 
 // Scene holds a 3D camera and draws the 3D world. Update runs camera logic (e.g. free camera);
@@ -81,6 +85,8 @@ type Scene struct {
 	skyboxShader    rl.Shader
 	skyboxCamPosLoc int32
 	skyboxTexLoc    int32
+	// 3D physics: AABB bodies in 1:1 with scene objects. Stepped only when terminal is closed (game mode).
+	physicsWorld *physics.World
 }
 
 // New returns a scene with a perspective camera looking at the origin.
@@ -96,7 +102,9 @@ func New() *Scene {
 	s.GridVisible = true
 	s.primitives = primitives.NewRegistry()
 	s.selectedIndex = -1 // no selection until user selects in terminal mode
+	s.physicsWorld = physics.NewWorld()
 	s.loadScene()
+	s.ensurePhysicsBodies()
 	s.loadSkybox()
 	return s
 }
@@ -152,6 +160,26 @@ func (s *Scene) SelectedObject() (ObjectInstance, bool) {
 	return s.sceneData.Objects[s.selectedIndex], true
 }
 
+// SetPhysicsForIndex sets whether the object at index has physics (falling/collision) enabled.
+// Returns an error if index is out of range. Persist with SaveScene.
+func (s *Scene) SetPhysicsForIndex(index int, enabled bool) error {
+	if index < 0 || index >= len(s.sceneData.Objects) {
+		return fmt.Errorf("object index %d out of range (0..%d)", index, len(s.sceneData.Objects)-1)
+	}
+	s.sceneData.Objects[index].Physics = &enabled
+	return nil
+}
+
+// SetSelectedPhysics sets physics on or off for the currently selected object.
+// Returns an error if no object is selected.
+func (s *Scene) SetSelectedPhysics(enabled bool) error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected (click an object with terminal open)")
+	}
+	return s.SetPhysicsForIndex(idx, enabled)
+}
+
 // SaveScene writes the current scene (including runtime-spawned objects) to the scene YAML file.
 // Uses the path we loaded from, or the first path in scenePaths if none was loaded.
 // Returns an error if the file cannot be written.
@@ -172,9 +200,10 @@ func (s *Scene) SaveScene() error {
 }
 
 // NewScene clears all objects from the scene and saves immediately, marking a fresh start.
-// The scene file is overwritten with an empty objects list.
+// The scene file is overwritten with an empty objects list. Physics bodies are cleared.
 func (s *Scene) NewScene() error {
 	s.sceneData.Objects = nil
+	s.physicsWorld.Bodies = nil
 	return s.SaveScene()
 }
 
@@ -292,15 +321,84 @@ func (s *Scene) SetGridVisible(visible bool) {
 	s.GridVisible = visible
 }
 
+// ensurePhysicsBodies keeps physics world bodies in 1:1 with scene objects. Adds bodies for new objects.
+// Static = physics disabled (no fall); dynamic = physics enabled (falls, collides). Scale 0 is treated as 1.
+func (s *Scene) ensurePhysicsBodies() {
+	objs := s.sceneData.Objects
+	for len(s.physicsWorld.Bodies) < len(objs) {
+		i := len(s.physicsWorld.Bodies)
+		obj := objs[i]
+		scale := scaleForPhysics(obj.Scale)
+		static := !physicsEnabled(obj)
+		s.physicsWorld.AddBody(physics.NewBody(obj.Position, scale, 1, static))
+	}
+}
+
+// physicsEnabled returns true if the object should be simulated (fall, collide). nil or true = on; false = off.
+func physicsEnabled(obj ObjectInstance) bool {
+	if obj.Physics == nil {
+		return true
+	}
+	return *obj.Physics
+}
+
+// PhysicsEnabledForObject returns true if the given object has physics (falling/collision) enabled.
+// Used by the inspector and callers that need to display or reason about physics state.
+func PhysicsEnabledForObject(obj ObjectInstance) bool {
+	return physicsEnabled(obj)
+}
+
+// scaleForPhysics returns scale with zeros replaced by 1 so AABB is valid.
+func scaleForPhysics(s [3]float32) [3]float32 {
+	out := s
+	if out[0] == 0 {
+		out[0] = 1
+	}
+	if out[1] == 0 {
+		out[1] = 1
+	}
+	if out[2] == 0 {
+		out[2] = 1
+	}
+	return out
+}
+
+// syncSceneToPhysics copies each scene object's position, scale, and physics flag into the corresponding physics body.
+func (s *Scene) syncSceneToPhysics() {
+	bodies := s.physicsWorld.Bodies
+	objs := s.sceneData.Objects
+	for i := 0; i < len(bodies) && i < len(objs); i++ {
+		bodies[i].Position = objs[i].Position
+		bodies[i].Scale = scaleForPhysics(objs[i].Scale)
+		bodies[i].Static = !physicsEnabled(objs[i])
+	}
+}
+
+// syncPhysicsToScene copies dynamic body positions back to scene objects.
+func (s *Scene) syncPhysicsToScene() {
+	bodies := s.physicsWorld.Bodies
+	objs := s.sceneData.Objects
+	for i := 0; i < len(bodies) && i < len(objs); i++ {
+		if !bodies[i].Static {
+			objs[i].Position = bodies[i].Position
+		}
+	}
+}
+
 // Update runs once per frame. Uses raylib UpdateCamera with CameraFree so the user can
 // move the camera with mouse (zoom, pan) and keyboard. Cursor is disabled so the mouse
-// is captured for camera control.
+// is captured for camera control. When terminal is closed (game mode), runs 3D physics:
+// sync scene→bodies, Step(dt), sync bodies→scene.
 func (s *Scene) Update() {
 	if !s.cursorDone {
 		rl.DisableCursor()
 		s.cursorDone = true
 	}
 	rl.UpdateCamera(&s.Camera, rl.CameraFree)
+	s.ensurePhysicsBodies()
+	s.syncSceneToPhysics()
+	s.physicsWorld.Step(rl.GetFrameTime())
+	s.syncPhysicsToScene()
 }
 
 // objectAABB returns the world-space AABB for a scene object (primitives are centered at position).

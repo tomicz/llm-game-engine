@@ -21,11 +21,11 @@
   top: 56px;
 }
 
-/* Inspector: right-side panel (Unity-style), when terminal is open and an object is selected */
+/* Inspector: right-side panel (Unity-style), when terminal open and an object is selected */
 .inspector {
   background: #2a2a2a;
   width: 280px;
-  height: 160px;
+  height: 200px;
   left: 88%;
   top: 24px;
   border: #444;
@@ -62,4 +62,14 @@
   left: 88%;
   top: 124px;
   padding: 12px;
+}
+
+.inspector-physics {
+  color: #ccc;
+  width: 280px;
+  height: 20px;
+  left: 88%;
+  top: 160px;
+  padding: 12px;
+  border: #666;
 }

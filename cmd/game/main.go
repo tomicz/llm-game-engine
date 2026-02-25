@@ -170,6 +170,23 @@ func main() {
 		return scn.NewScene()
 	})
 
+	// physics: enable or disable falling/collision for the selected object. Usage: cmd physics on | cmd physics off
+	physicsFS := flag.NewFlagSet("physics", flag.ContinueOnError)
+	reg.Register("physics", physicsFS, func() error {
+		args := physicsFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd physics on | cmd physics off (select an object first)")
+		}
+		switch args[0] {
+		case "on":
+			return scn.SetSelectedPhysics(true)
+		case "off":
+			return scn.SetSelectedPhysics(false)
+		default:
+			return fmt.Errorf("use on or off (e.g. cmd physics off)")
+		}
+	})
+
 	term := terminal.New(logger, reg)
 
 	// UI: CSS-driven overlay (scene UI). Renders after debug, before terminal.
@@ -203,6 +220,19 @@ func main() {
 		if term.IsOpen() {
 			// Cursor visible: allow selecting and moving primitives (not skybox/grid).
 			scn.UpdateEditor(true, terminal.BarHeight)
+			// Inspector physics toggle: left-click on the physics row toggles physics for selected object.
+			if obj, ok := scn.SelectedObject(); ok {
+				if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+					screenH := int32(rl.GetScreenHeight())
+					mouseY := rl.GetMouseY()
+					if mouseY < screenH-int32(terminal.BarHeight) {
+						hitNode, hit := uiEngine.HitTest(rl.GetMouseX(), mouseY)
+						if hit && hitNode != nil && hitNode.Class == "inspector-physics" {
+							_ = scn.SetSelectedPhysics(!scene.PhysicsEnabledForObject(obj))
+						}
+					}
+				}
+			}
 		} else {
 			scn.Update()
 		}
@@ -216,6 +246,7 @@ func main() {
 			Name:     obj.Type,
 			Position: obj.Position,
 			Scale:    obj.Scale,
+			Physics:  scene.PhysicsEnabledForObject(obj),
 		})
 		if !uiFontTried {
 			uiFontTried = true

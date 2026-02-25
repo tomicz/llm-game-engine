@@ -164,6 +164,41 @@ func (e *Engine) Draw() {
 	}
 }
 
+// HitTest returns the topmost node that contains the given screen point (e.g. mouse position).
+// Uses the same layout as Draw; call after SetNodes (e.g. after a Draw) so layout is resolved.
+// Returns (nil, false) if no node contains the point.
+func (e *Engine) HitTest(screenX, screenY int32) (*Node, bool) {
+	screenW := int32(rl.GetScreenWidth())
+	screenH := int32(rl.GetScreenHeight())
+	if !e.cacheValid {
+		e.cachedStyles = make([]ComputedStyle, len(e.nodes))
+		for i, n := range e.nodes {
+			props := e.resolveProps(n)
+			e.cachedStyles[i] = ResolveProps(props)
+			resolveBounds(n, e.cachedStyles[i])
+		}
+		e.cacheValid = true
+	}
+	for i := len(e.nodes) - 1; i >= 0; i-- {
+		n := e.nodes[i]
+		style := e.cachedStyles[i]
+		w := int32(n.Bounds.Width)
+		h := int32(n.Bounds.Height)
+		x := int32(n.Bounds.X)
+		y := int32(n.Bounds.Y)
+		if style.LeftPct >= 0 {
+			x = (screenW - w) * style.LeftPct / 100
+		}
+		if style.TopPct >= 0 {
+			y = (screenH - h) * style.TopPct / 100
+		}
+		if w > 0 && h > 0 && screenX >= x && screenX < x+w && screenY >= y && screenY < y+h {
+			return n, true
+		}
+	}
+	return nil, false
+}
+
 // HasStylesheet returns whether a CSS file has been loaded.
 func (e *Engine) HasStylesheet() bool {
 	return e.sheet != nil && len(e.sheet.Rules) > 0
