@@ -55,6 +55,7 @@ type Scene struct {
 	GridVisible bool
 	// Scene objects loaded from YAML; drawn each frame. Not hardcoded.
 	sceneData   SceneData
+	scenePath   string // path we loaded from; Save writes here (or first scenePaths if never loaded)
 	primitives  *primitives.Registry
 	// Skybox: optional texture drawn first in 3D mode. Cubemap or equirectangular panorama.
 	skyboxTex       rl.Texture2D
@@ -100,6 +101,7 @@ func (s *Scene) loadScene() {
 	if path == "" {
 		return
 	}
+	s.scenePath = path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -109,6 +111,44 @@ func (s *Scene) loadScene() {
 		return
 	}
 	s.sceneData = sd
+}
+
+// AddObject appends an object to the scene. It is drawn on the next frame.
+// Use for runtime spawning (e.g. from the spawn command).
+func (s *Scene) AddObject(obj ObjectInstance) {
+	s.sceneData.Objects = append(s.sceneData.Objects, obj)
+}
+
+// AddPrimitive adds a primitive with the given position and scale. Default scale is [1,1,1].
+// Position is the center of the primitive.
+func (s *Scene) AddPrimitive(typ string, position, scale [3]float32) {
+	s.AddObject(ObjectInstance{Type: typ, Position: position, Scale: scale})
+}
+
+// SaveScene writes the current scene (including runtime-spawned objects) to the scene YAML file.
+// Uses the path we loaded from, or the first path in scenePaths if none was loaded.
+// Returns an error if the file cannot be written.
+func (s *Scene) SaveScene() error {
+	path := s.scenePath
+	if path == "" {
+		path = filepath.Clean(scenePaths[0])
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(&s.sceneData)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// NewScene clears all objects from the scene and saves immediately, marking a fresh start.
+// The scene file is overwritten with an empty objects list.
+func (s *Scene) NewScene() error {
+	s.sceneData.Objects = nil
+	return s.SaveScene()
 }
 
 // equirectAspectMin/Max: width/height ratio for equirectangular panorama (typically 2:1).

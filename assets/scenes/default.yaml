@@ -1,15 +1,10 @@
-# Scene: list of object instances. Each has type and position; scale is optional (default 1,1,1).
-# Cube, sphere, cylinder Y=0.5 so their bottom sits on the quad (plane at Y=0).
 objects:
-  - type: plane
-    position: [0, 0, 0]
-    scale: [10, 1, 10]
-  - type: cube
-    position: [0, 0.5, 0]
-    scale: [1, 1, 1]
-  - type: sphere
-    position: [2.5, 0.5, 0]
-    scale: [1, 1, 1]
-  - type: cylinder
-    position: [-2.5, 0.5, 0]
-    scale: [1, 1, 1]
+    - type: plane
+      position:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 10
+        - 1
+        - 10

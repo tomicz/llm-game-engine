@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
 	"game-engine/internal/engineconfig"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"strconv"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -116,6 +118,55 @@ func main() {
 			rl.ToggleFullscreen()
 		}
 		return nil
+	})
+
+	// spawn: add a primitive at a position. Usage: cmd spawn <type> <x> <y> <z> [sx sy sz]
+	// type: cube | sphere | cylinder | plane. Scale defaults to 1,1,1 if omitted.
+	spawnFS := flag.NewFlagSet("spawn", flag.ContinueOnError)
+	reg.Register("spawn", spawnFS, func() error {
+		args := spawnFS.Args()
+		if len(args) != 4 && len(args) != 7 {
+			return fmt.Errorf("usage: cmd spawn <type> <x> <y> <z> [sx sy sz] (e.g. cmd spawn cube 0 0 0 or cmd spawn cube 0 0 0 2 1 1)")
+		}
+		typ := args[0]
+		switch typ {
+		case "cube", "sphere", "cylinder", "plane":
+			// ok
+		default:
+			return fmt.Errorf("unknown type %q (use: cube, sphere, cylinder, plane)", typ)
+		}
+		var pos [3]float32
+		for i := 0; i < 3; i++ {
+			f, err := strconv.ParseFloat(args[1+i], 32)
+			if err != nil {
+				return fmt.Errorf("invalid position %q: %w", args[1+i], err)
+			}
+			pos[i] = float32(f)
+		}
+		scale := [3]float32{1, 1, 1}
+		if len(args) == 7 {
+			for i := 0; i < 3; i++ {
+				f, err := strconv.ParseFloat(args[4+i], 32)
+				if err != nil {
+					return fmt.Errorf("invalid scale %q: %w", args[4+i], err)
+				}
+				scale[i] = float32(f)
+			}
+		}
+		scn.AddPrimitive(typ, pos, scale)
+		return nil
+	})
+
+	// save: write current scene (including runtime-spawned objects) to the scene YAML file.
+	saveFS := flag.NewFlagSet("save", flag.ContinueOnError)
+	reg.Register("save", saveFS, func() error {
+		return scn.SaveScene()
+	})
+
+	// newscene: clear all primitives and save an empty scene (fresh start).
+	newsceneFS := flag.NewFlagSet("newscene", flag.ContinueOnError)
+	reg.Register("newscene", newsceneFS, func() error {
+		return scn.NewScene()
 	})
 
 	term := terminal.New(logger, reg)

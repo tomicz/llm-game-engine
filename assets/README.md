@@ -2,6 +2,12 @@
 
 Optional runtime assets. The game runs without these; they enhance the scene when present.
 
+## Logo and app icon
+
+- **`logo.svg`** — Engine logo (icon only, no text). Use in UI or docs.
+- **`logo_icon.svg`** — Square variant for app/executable icon (same mark, centered).
+- **`icons/`** — Executable/app icon: run `./assets/icons/build_icns.sh` to build `AppIcon.icns` from the logo. See `icons/README.md`.
+
 Assets are grouped by purpose. Skybox files live in **`assets/skybox/`** so they stay separate from other assets you may add later.
 
 ## Skybox (`assets/skybox/`)
