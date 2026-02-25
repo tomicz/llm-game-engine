@@ -296,6 +296,18 @@ func (r *Registry) setColDiffuse(shader rl.Shader, tint [4]float32) {
 	}
 }
 
+// tintToColor converts RGBA 0-1 to rl.Color. If tint is nil, returns default gray for uncolored objects.
+func tintToColor(tint *[4]float32) rl.Color {
+	if tint == nil {
+		return defaultPrimitiveColor
+	}
+	r := uint8(tint[0] * 255)
+	g := uint8(tint[1] * 255)
+	b := uint8(tint[2] * 255)
+	a := uint8(tint[3] * 255)
+	return rl.NewColor(r, g, b, a)
+}
+
 // drawCached draws a cached mesh with the given key at position and scale (scale 0 → 1).
 // modelCenterOffset shifts the mesh in model space before scale/translate so the scene position
 // is the primitive's center. Use (0,0,0) for cube/sphere (already centered); (0,-0.5,0) for cylinder
@@ -306,10 +318,16 @@ func (r *Registry) drawCached(key string, position, scale [3]float32, modelCente
 	if !ok {
 		return
 	}
-	r.setLitShaderUniforms(c.mtl.Shader)
-	if tint != nil {
-		r.setColDiffuse(c.mtl.Shader, *tint)
+	// Set material albedo color so raylib and our shader use the right tint.
+	if albedo := c.mtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = tintToColor(tint)
 	}
+	defaultTint := [4]float32{0.5, 0.5, 0.5, 1}
+	if tint != nil {
+		defaultTint = *tint
+	}
+	r.setLitShaderUniforms(c.mtl.Shader)
+	r.setColDiffuse(c.mtl.Shader, defaultTint)
 	sx, sy, sz := scale[0], scale[1], scale[2]
 	if sx == 0 {
 		sx = 1
@@ -340,10 +358,15 @@ func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32,
 		return
 	}
 	rl.SetMaterialTexture(&c.texturedMtl, rl.MapAlbedo, tex)
-	r.setLitShaderUniforms(c.texturedMtl.Shader)
-	if tint != nil {
-		r.setColDiffuse(c.texturedMtl.Shader, *tint)
+	if albedo := c.texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = tintToColor(tint)
 	}
+	defaultTint := [4]float32{1, 1, 1, 1}
+	if tint != nil {
+		defaultTint = *tint
+	}
+	r.setLitShaderUniforms(c.texturedMtl.Shader)
+	r.setColDiffuse(c.texturedMtl.Shader, defaultTint)
 	sx, sy, sz := scale[0], scale[1], scale[2]
 	if sx == 0 {
 		sx = 1
