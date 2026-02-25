@@ -139,6 +139,19 @@ func (s *Scene) AddPrimitive(typ string, position, scale [3]float32) {
 	s.AddObject(ObjectInstance{Type: typ, Position: position, Scale: scale})
 }
 
+// SelectedIndex returns the index of the selected object, or -1 if none.
+func (s *Scene) SelectedIndex() int {
+	return s.selectedIndex
+}
+
+// SelectedObject returns the currently selected object and true, or (zero, false) if none.
+func (s *Scene) SelectedObject() (ObjectInstance, bool) {
+	if s.selectedIndex < 0 || s.selectedIndex >= len(s.sceneData.Objects) {
+		return ObjectInstance{}, false
+	}
+	return s.sceneData.Objects[s.selectedIndex], true
+}
+
 // SaveScene writes the current scene (including runtime-spawned objects) to the scene YAML file.
 // Uses the path we loaded from, or the first path in scenePaths if none was loaded.
 // Returns an error if the file cannot be written.

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"runtime"
 	"strconv"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -178,15 +179,30 @@ func main() {
 			break
 		}
 	}
-	uiEngine.AddNode(ui.NewNode("panel", "panel", "", ""))
-	uiEngine.AddNode(ui.NewNode("label", "title", "", "UI"))
-	uiEngine.AddNode(ui.NewNode("label", "label", "", "CSS-driven"))
+	// Base nodes: none (inspector is the only UI when shown)
+	baseNodes := []*ui.Node{}
+	inspector := ui.NewInspector()
+
+	// Try loading a TTF font for UI (smooth text). Attempt once after first frame (window exists).
+	uiFontTried := false
+	uiFontPaths := func() []string {
+		paths := []string{"assets/ui/fonts/default.ttf", "../../assets/ui/fonts/default.ttf"}
+		switch runtime.GOOS {
+		case "darwin":
+			paths = append(paths, "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc")
+		case "windows":
+			paths = append(paths, "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\segoeui.ttf")
+		default:
+			paths = append(paths, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")
+		}
+		return paths
+	}()
 
 	update := func() {
 		term.Update()
 		if term.IsOpen() {
 			// Cursor visible: allow selecting and moving primitives (not skybox/grid).
-		scn.UpdateEditor(true, terminal.BarHeight)
+			scn.UpdateEditor(true, terminal.BarHeight)
 		} else {
 			scn.Update()
 		}
@@ -194,6 +210,22 @@ func main() {
 	draw := func() {
 		scn.Draw(term.IsOpen())
 		dbg.Draw()
+		var nodes []*ui.Node
+		obj, ok := scn.SelectedObject()
+		nodes = inspector.AppendNodes(baseNodes, term.IsOpen() && ok, ui.Selection{
+			Name:     obj.Type,
+			Position: obj.Position,
+			Scale:    obj.Scale,
+		})
+		if !uiFontTried {
+			uiFontTried = true
+			for _, p := range uiFontPaths {
+				if err := uiEngine.LoadFont(p); err == nil {
+					break
+				}
+			}
+		}
+		uiEngine.SetNodes(nodes)
 		uiEngine.Draw()
 		term.Draw()
 	}

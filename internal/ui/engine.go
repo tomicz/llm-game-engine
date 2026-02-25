@@ -11,11 +11,13 @@ const defaultFontSize = 20
 // Engine holds the current stylesheet and nodes, and draws them with raylib.
 // Draw order is node order (first node drawn first, then on top the next).
 // Resolved styles are cached and only recomputed when sheet or nodes change to avoid per-frame allocations.
+// If font is loaded (LoadFont), text is drawn with that font; otherwise raylib's default (pixel) font is used.
 type Engine struct {
 	sheet        *Stylesheet
 	nodes        []*Node
 	cachedStyles []ComputedStyle
 	cacheValid   bool
+	font         rl.Font
 }
 
 // New creates an empty UI engine (no stylesheet, no nodes).
@@ -42,6 +44,20 @@ func (e *Engine) LoadCSS(path string) error {
 func (e *Engine) SetStylesheet(sheet *Stylesheet) {
 	e.sheet = sheet
 	e.cacheValid = false
+}
+
+// LoadFont loads a TTF font from path for text rendering. If loading fails, the engine keeps using the default font.
+// Call after the window/OpenGL context exists (e.g. after first frame or in draw).
+func (e *Engine) LoadFont(path string) error {
+	f := rl.LoadFont(path)
+	if f.Texture.ID == 0 {
+		return os.ErrNotExist
+	}
+	if e.font.Texture.ID != 0 {
+		rl.UnloadFont(e.font)
+	}
+	e.font = f
+	return nil
 }
 
 // AddNode appends a node. Nodes are drawn in order.
@@ -133,9 +149,17 @@ func (e *Engine) Draw() {
 		}
 		// Text (for label-type or any node with text)
 		if n.Text != "" {
-			textX := x + 4
-			textY := y + 4
-			rl.DrawText(n.Text, textX, textY, defaultFontSize, style.Color)
+			pad := style.Padding
+			if pad <= 0 {
+				pad = 4
+			}
+			textX := x + pad
+			textY := y + pad
+			if e.font.Texture.ID != 0 {
+				rl.DrawTextEx(e.font, n.Text, rl.NewVector2(float32(textX), float32(textY)), float32(defaultFontSize), 1, style.Color)
+			} else {
+				rl.DrawText(n.Text, textX, textY, defaultFontSize, style.Color)
+			}
 		}
 	}
 }

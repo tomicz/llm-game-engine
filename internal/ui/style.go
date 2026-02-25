@@ -20,6 +20,7 @@ type Stylesheet struct {
 
 // ComputedStyle holds resolved values used for drawing (raylib types where applicable).
 // LeftPct/TopPct: 0–100 for percentage positioning; -1 means use Left/Top as pixels.
+// Padding is the offset (in pixels) from the node's left/top when drawing text.
 type ComputedStyle struct {
 	Background rl.Color
 	Color      rl.Color
@@ -31,6 +32,7 @@ type ComputedStyle struct {
 	Top        int32
 	LeftPct    int32 // -1 = not set
 	TopPct     int32 // -1 = not set
+	Padding    int32 // text offset from node bounds (default 4)
 }
 
 // DefaultComputedStyle returns a minimal style (transparent background, white text, no border, zero size).
@@ -46,6 +48,7 @@ func DefaultComputedStyle() ComputedStyle {
 		Top:        0,
 		LeftPct:    -1,
 		TopPct:     -1,
+		Padding:    4,
 	}
 }
 
@@ -148,6 +151,10 @@ func ResolveProps(props map[string]string) ComputedStyle {
 				out.TopPct = pct
 			} else if n, ok := ParsePx(v); ok {
 				out.Top = n
+			}
+		case "padding":
+			if n, ok := ParsePx(v); ok && n >= 0 {
+				out.Padding = n
 			}
 		}
 	}

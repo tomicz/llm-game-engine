@@ -20,3 +20,46 @@
   left: 32px;
   top: 56px;
 }
+
+/* Inspector: right-side panel (Unity-style), when terminal is open and an object is selected */
+.inspector {
+  background: #2a2a2a;
+  width: 280px;
+  height: 160px;
+  left: 88%;
+  top: 24px;
+  border: #444;
+}
+
+/* Inspector labels: same width and left as panel, with padding so text sits inside the panel */
+.inspector-title {
+  color: #eee;
+  width: 280px;
+  left: 88%;
+  top: 28px;
+  padding: 12px;
+}
+
+.inspector-name {
+  color: #ccc;
+  width: 280px;
+  left: 88%;
+  top: 52px;
+  padding: 12px;
+}
+
+.inspector-position {
+  color: #ccc;
+  width: 280px;
+  left: 88%;
+  top: 88px;
+  padding: 12px;
+}
+
+.inspector-scale {
+  color: #ccc;
+  width: 280px;
+  left: 88%;
+  top: 124px;
+  padding: 12px;
+}
