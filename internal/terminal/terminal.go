@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	barHeight = 40
+	BarHeight = 40
 	prompt    = "> "
 	fontSize  = 20
 	padding   = 8
@@ -86,9 +86,9 @@ func (t *Terminal) Draw() {
 	}
 	screenW := int(rl.GetScreenWidth())
 	screenH := int(rl.GetScreenHeight())
-	barY := screenH - barHeight
+	barY := screenH - BarHeight
 
-	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(barHeight), termBarColor)
+	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(BarHeight), termBarColor)
 	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, termLineColor)
 
 	text := prompt + t.inputBuf + "|"

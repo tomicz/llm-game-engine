@@ -57,6 +57,9 @@ type Scene struct {
 	sceneData   SceneData
 	scenePath   string // path we loaded from; Save writes here (or first scenePaths if never loaded)
 	primitives  *primitives.Registry
+	// Editor: when terminal is open (cursor visible), user can select and move primitives. -1 = no selection.
+	selectedIndex int
+	dragging      bool
 	// Skybox: optional texture drawn first in 3D mode. Cubemap or equirectangular panorama.
 	skyboxTex       rl.Texture2D
 	skyboxMesh      rl.Mesh
@@ -82,6 +85,7 @@ func New() *Scene {
 	s.Camera.Projection = rl.CameraPerspective
 	s.GridVisible = true
 	s.primitives = primitives.NewRegistry()
+	s.selectedIndex = -1 // no selection until user selects in terminal mode
 	s.loadScene()
 	s.loadSkybox()
 	return s
@@ -276,9 +280,104 @@ func (s *Scene) Update() {
 	rl.UpdateCamera(&s.Camera, rl.CameraFree)
 }
 
+// objectAABB returns the world-space AABB for a scene object (primitives are centered at position).
+// Scale 0 is treated as 1 so we get a valid box.
+func objectAABB(obj ObjectInstance) rl.BoundingBox {
+	sx, sy, sz := obj.Scale[0], obj.Scale[1], obj.Scale[2]
+	if sx == 0 {
+		sx = 1
+	}
+	if sy == 0 {
+		sy = 1
+	}
+	if sz == 0 {
+		sz = 1
+	}
+	half := [3]float32{sx * 0.5, sy * 0.5, sz * 0.5}
+	return rl.NewBoundingBox(
+		rl.NewVector3(obj.Position[0]-half[0], obj.Position[1]-half[1], obj.Position[2]-half[2]),
+		rl.NewVector3(obj.Position[0]+half[0], obj.Position[1]+half[1], obj.Position[2]+half[2]),
+	)
+}
+
+// rayPlaneY returns the intersection of ray with the horizontal plane Y = planeY.
+// Returns (hit point, true) if hit in front of the ray, otherwise (zero, false).
+func rayPlaneY(ray rl.Ray, planeY float32) (rl.Vector3, bool) {
+	dy := ray.Direction.Y
+	if dy > -1e-6 && dy < 1e-6 {
+		return rl.Vector3{}, false
+	}
+	t := (planeY - ray.Position.Y) / dy
+	if t < 0 {
+		return rl.Vector3{}, false
+	}
+	hit := rl.Vector3{
+		X: ray.Position.X + t*ray.Direction.X,
+		Y: ray.Position.Y + t*ray.Direction.Y,
+		Z: ray.Position.Z + t*ray.Direction.Z,
+	}
+	return hit, true
+}
+
+// UpdateEditor runs when the terminal is open (cursor visible). It handles selection and
+// movement of scene primitives. terminalBarHeight is the height in pixels of the bar at
+// the bottom; mouse events in that area are ignored so the terminal can receive input.
+// Only scene objects (primitives) are selectable and movable; skybox and grid are not.
+func (s *Scene) UpdateEditor(cursorVisible bool, terminalBarHeight int) {
+	if !cursorVisible {
+		s.dragging = false
+		return
+	}
+	objs := s.sceneData.Objects
+	if len(objs) == 0 {
+		return
+	}
+	screenH := int32(rl.GetScreenHeight())
+	mouseY := rl.GetMouseY()
+	if mouseY >= screenH-int32(terminalBarHeight) {
+		// Mouse over terminal bar: don't change selection or drag
+		s.dragging = false
+		return
+	}
+	mousePos := rl.GetMousePosition()
+	ray := rl.GetMouseRay(mousePos, s.Camera)
+
+	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+		// Pick: find closest hit (smallest positive distance)
+		bestIdx := -1
+		bestDist := float32(1e30)
+		for i := range objs {
+			obj := &objs[i]
+			box := objectAABB(*obj)
+			hit := rl.GetRayCollisionBox(ray, box)
+			if hit.Hit && hit.Distance > 0 && hit.Distance < bestDist {
+				bestDist = hit.Distance
+				bestIdx = i
+			}
+		}
+		s.selectedIndex = bestIdx
+		s.dragging = bestIdx >= 0
+		return
+	}
+	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
+		s.dragging = false
+		return
+	}
+	if s.dragging && s.selectedIndex >= 0 && s.selectedIndex < len(objs) {
+		obj := &objs[s.selectedIndex]
+		hit, ok := rayPlaneY(ray, obj.Position[1])
+		if ok {
+			obj.Position[0] = hit.X
+			obj.Position[2] = hit.Z
+			// Y unchanged (drag on XZ plane at object's height)
+		}
+	}
+}
+
 // Draw renders the 3D scene. Call after ClearBackground and before 2D overlay (e.g. terminal).
 // Draws skybox first (if loaded), then a Unity-style grid on the XZ plane (Y=0) when GridVisible is true.
-func (s *Scene) Draw() {
+// selectionVisible should be true only when terminal is open (editor mode); the selection outline is drawn only then.
+func (s *Scene) Draw(selectionVisible bool) {
 	s.ensureSkyboxLoaded()
 	rl.BeginMode3D(s.Camera)
 	if s.skyboxLoaded {
@@ -287,8 +386,13 @@ func (s *Scene) Draw() {
 	viewPos := [3]float32{s.Camera.Position.X, s.Camera.Position.Y, s.Camera.Position.Z}
 	lightDir := [3]float32{0.5, 1, 0.5} // direction to light (above-right), for primitive shading
 	s.primitives.SetView(viewPos, lightDir)
-	for _, obj := range s.sceneData.Objects {
+	for i, obj := range s.sceneData.Objects {
 		s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
+		// Outline only in terminal mode and when this object is selected
+		if selectionVisible && s.selectedIndex == i {
+			box := objectAABB(obj)
+			rl.DrawBoundingBox(box, rl.Yellow)
+		}
 	}
 	if s.GridVisible {
 		drawEditorGrid()

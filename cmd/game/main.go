@@ -184,12 +184,15 @@ func main() {
 
 	update := func() {
 		term.Update()
-		if !term.IsOpen() {
+		if term.IsOpen() {
+			// Cursor visible: allow selecting and moving primitives (not skybox/grid).
+		scn.UpdateEditor(true, terminal.BarHeight)
+		} else {
 			scn.Update()
 		}
 	}
 	draw := func() {
-		scn.Draw()
+		scn.Draw(term.IsOpen())
 		dbg.Draw()
 		uiEngine.Draw()
 		term.Draw()
