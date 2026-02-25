@@ -11,13 +11,17 @@ import (
 )
 
 const (
-	gridExtent  = 50
-	gridMinorStep = 1
-	gridMajorStep = 10
+	gridExtent     = 50
+	gridMinorStep  = 1
+	gridMajorStep  = 10
 	gridMinorAlpha = 50
 	gridMajorAlpha = 120
 	axisLineAlpha  = 220
 	skyboxScale    = 1000
+	// Y-drag: world units per pixel (screen-space mouse delta → vertical movement).
+	yDragSensitivity = float32(0.015)
+	// Gizmo arrows: visual-only length (no picking).
+	gizmoArrowLength = float32(1.5)
 )
 
 // skyboxPaths are tried in order so the skybox is found whether run from repo root or cmd/game.
@@ -60,6 +64,12 @@ type Scene struct {
 	// Editor: when terminal is open (cursor visible), user can select and move primitives. -1 = no selection.
 	selectedIndex int
 	dragging      bool
+	// Drag mode from selection box face: 0=none, 1=top/bottom (XZ), 2=side (Y). For Y we use mouse delta.
+	dragMode        int
+	dragStartObjY   float32
+	lastMouseY      int32   // screen Y when Y drag started (total delta from this)
+	dragOffsetX     float32 // XZ: offset from object center to click point so drag keeps that point under cursor
+	dragOffsetZ     float32
 	// Skybox: optional texture drawn first in 3D mode. Cubemap or equirectangular panorama.
 	skyboxTex       rl.Texture2D
 	skyboxMesh      rl.Mesh
@@ -319,13 +329,35 @@ func rayPlaneY(ray rl.Ray, planeY float32) (rl.Vector3, bool) {
 	return hit, true
 }
 
+// rayPlane returns the intersection of ray with a plane (point + normal). Returns (hit, true) if t >= 0.
+func rayPlane(ray rl.Ray, planePoint rl.Vector3, planeNormal rl.Vector3) (rl.Vector3, bool) {
+	dn := ray.Direction.X*planeNormal.X + ray.Direction.Y*planeNormal.Y + ray.Direction.Z*planeNormal.Z
+	if dn > -1e-6 && dn < 1e-6 {
+		return rl.Vector3{}, false
+	}
+	diffX := planePoint.X - ray.Position.X
+	diffY := planePoint.Y - ray.Position.Y
+	diffZ := planePoint.Z - ray.Position.Z
+	t := (diffX*planeNormal.X + diffY*planeNormal.Y + diffZ*planeNormal.Z) / dn
+	if t < 0 {
+		return rl.Vector3{}, false
+	}
+	return rl.Vector3{
+		X: ray.Position.X + t*ray.Direction.X,
+		Y: ray.Position.Y + t*ray.Direction.Y,
+		Z: ray.Position.Z + t*ray.Direction.Z,
+	}, true
+}
+
 // UpdateEditor runs when the terminal is open (cursor visible). It handles selection and
 // movement of scene primitives. terminalBarHeight is the height in pixels of the bar at
 // the bottom; mouse events in that area are ignored so the terminal can receive input.
-// Only scene objects (primitives) are selectable and movable; skybox and grid are not.
+// Drag mode is chosen by which face of the selection box was hit: top/bottom → XZ (forward/sides),
+// side faces → Y (up/down). Only scene objects are selectable and movable; skybox and grid are not.
 func (s *Scene) UpdateEditor(cursorVisible bool, terminalBarHeight int) {
 	if !cursorVisible {
 		s.dragging = false
+		s.dragMode = 0
 		return
 	}
 	objs := s.sceneData.Objects
@@ -335,43 +367,102 @@ func (s *Scene) UpdateEditor(cursorVisible bool, terminalBarHeight int) {
 	screenH := int32(rl.GetScreenHeight())
 	mouseY := rl.GetMouseY()
 	if mouseY >= screenH-int32(terminalBarHeight) {
-		// Mouse over terminal bar: don't change selection or drag
 		s.dragging = false
+		s.dragMode = 0
 		return
 	}
 	mousePos := rl.GetMousePosition()
 	ray := rl.GetMouseRay(mousePos, s.Camera)
 
+	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
+		s.dragging = false
+		s.dragMode = 0
+		return
+	}
+
+	// Y drag: move object up/down from screen-space mouse delta (total pixels since drag start)
+	if s.dragMode == 2 && s.selectedIndex >= 0 && s.selectedIndex < len(objs) {
+		obj := &objs[s.selectedIndex]
+		deltaPixels := mouseY - s.lastMouseY
+		obj.Position[1] = s.dragStartObjY - float32(deltaPixels)*yDragSensitivity
+		return
+	}
+
 	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-		// Pick: find closest hit (smallest positive distance)
+		// Box pick: find closest hit and use hit normal to choose drag mode
 		bestIdx := -1
 		bestDist := float32(1e30)
+		var bestHit rl.RayCollision
 		for i := range objs {
-			obj := &objs[i]
-			box := objectAABB(*obj)
+			box := objectAABB(objs[i])
 			hit := rl.GetRayCollisionBox(ray, box)
 			if hit.Hit && hit.Distance > 0 && hit.Distance < bestDist {
 				bestDist = hit.Distance
 				bestIdx = i
+				bestHit = hit
 			}
 		}
 		s.selectedIndex = bestIdx
 		s.dragging = bestIdx >= 0
+		if bestIdx >= 0 {
+			// Top or bottom face only when normal is clearly vertical (Y ≈ ±1). All 4 side faces (Y ≈ 0) → Y drag.
+			n := bestHit.Normal
+			if n.Y > 0.99 || n.Y < -0.99 {
+				s.dragMode = 1 // top or bottom: drag on horizontal plane (XZ)
+				// Store offset from object center to click point so the clicked point stays under cursor
+				s.dragOffsetX = bestHit.Point.X - objs[bestIdx].Position[0]
+				s.dragOffsetZ = bestHit.Point.Z - objs[bestIdx].Position[2]
+			} else {
+				s.dragMode = 2 // any of the 4 side faces: drag up/down (Y)
+				s.dragStartObjY = objs[bestIdx].Position[1]
+				s.lastMouseY = mouseY // store so total delta = mouseY - lastMouseY each frame
+			}
+		} else {
+			s.dragMode = 0
+		}
 		return
 	}
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
-		s.dragging = false
-		return
-	}
-	if s.dragging && s.selectedIndex >= 0 && s.selectedIndex < len(objs) {
+
+	// XZ drag (top/bottom face): drag on horizontal plane at object Y, keeping click offset under cursor
+	if s.dragMode == 1 && s.dragging && s.selectedIndex >= 0 && s.selectedIndex < len(objs) {
 		obj := &objs[s.selectedIndex]
 		hit, ok := rayPlaneY(ray, obj.Position[1])
 		if ok {
-			obj.Position[0] = hit.X
-			obj.Position[2] = hit.Z
-			// Y unchanged (drag on XZ plane at object's height)
+			obj.Position[0] = hit.X - s.dragOffsetX
+			obj.Position[2] = hit.Z - s.dragOffsetZ
 		}
 	}
+}
+
+// drawGizmoArrows draws red (X), green (Y), blue (Z) arrows at pos. Visual only; no picking.
+func drawGizmoArrows(pos [3]float32) {
+	length := gizmoArrowLength
+	headSize := length * 0.2
+	red := rl.NewColor(220, 80, 80, 255)
+	green := rl.NewColor(80, 220, 80, 255)
+	blue := rl.NewColor(80, 80, 220, 255)
+	base := rl.NewVector3(pos[0], pos[1], pos[2])
+	// X
+	endX := rl.NewVector3(pos[0]+length, pos[1], pos[2])
+	rl.DrawLine3D(base, endX, red)
+	rl.DrawLine3D(endX, rl.NewVector3(pos[0]+length-headSize, pos[1], pos[2]+headSize), red)
+	rl.DrawLine3D(endX, rl.NewVector3(pos[0]+length-headSize, pos[1], pos[2]-headSize), red)
+	rl.DrawLine3D(endX, rl.NewVector3(pos[0]+length-headSize, pos[1]+headSize, pos[2]), red)
+	rl.DrawLine3D(endX, rl.NewVector3(pos[0]+length-headSize, pos[1]-headSize, pos[2]), red)
+	// Y
+	endY := rl.NewVector3(pos[0], pos[1]+length, pos[2])
+	rl.DrawLine3D(base, endY, green)
+	rl.DrawLine3D(endY, rl.NewVector3(pos[0], pos[1]+length-headSize, pos[2]+headSize), green)
+	rl.DrawLine3D(endY, rl.NewVector3(pos[0], pos[1]+length-headSize, pos[2]-headSize), green)
+	rl.DrawLine3D(endY, rl.NewVector3(pos[0]+headSize, pos[1]+length-headSize, pos[2]), green)
+	rl.DrawLine3D(endY, rl.NewVector3(pos[0]-headSize, pos[1]+length-headSize, pos[2]), green)
+	// Z
+	endZ := rl.NewVector3(pos[0], pos[1], pos[2]+length)
+	rl.DrawLine3D(base, endZ, blue)
+	rl.DrawLine3D(endZ, rl.NewVector3(pos[0]+headSize, pos[1], pos[2]+length-headSize), blue)
+	rl.DrawLine3D(endZ, rl.NewVector3(pos[0]-headSize, pos[1], pos[2]+length-headSize), blue)
+	rl.DrawLine3D(endZ, rl.NewVector3(pos[0], pos[1]+headSize, pos[2]+length-headSize), blue)
+	rl.DrawLine3D(endZ, rl.NewVector3(pos[0], pos[1]-headSize, pos[2]+length-headSize), blue)
 }
 
 // Draw renders the 3D scene. Call after ClearBackground and before 2D overlay (e.g. terminal).
@@ -392,6 +483,7 @@ func (s *Scene) Draw(selectionVisible bool) {
 		if selectionVisible && s.selectedIndex == i {
 			box := objectAABB(obj)
 			rl.DrawBoundingBox(box, rl.Yellow)
+			drawGizmoArrows(obj.Position)
 		}
 	}
 	if s.GridVisible {

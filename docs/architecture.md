@@ -94,6 +94,19 @@ Tunables live in `internal/scene/scene.go` as constants: `gridExtent`, `gridMino
 
 ---
 
+## Scene editor (terminal mode)
+
+When the **terminal is open** (ESC; cursor visible), the scene runs in editor mode: you can **select** and **move** primitives. Skybox and grid are not selectable or movable.
+
+- **Selection:** Click an object (ray vs object AABB). The selected object gets a **yellow bounding box** and **red (X), green (Y), blue (Z) direction arrows** at its center. The arrows are **visual only** (no picking); movement is by box face.
+- **Drag mode from box face:** Which face you click decides how you move:
+  - **Top or bottom face** (horizontal) → drag on the **XZ plane** (forward/back, left/right). The point you clicked stays under the cursor (offset from object center is stored so the object doesn’t teleport when you click an edge).
+  - **Any of the four side faces** (vertical) → drag **up/down** (Y). Movement uses screen-space mouse delta and a sensitivity constant; mouse up = object up.
+- **Implementation:** `internal/scene/scene.go`: `UpdateEditor(cursorVisible, terminalBarHeight)` handles pick and drag; face classification uses the ray–box hit normal (Y ≈ ±1 → top/bottom, else side). XZ drag uses `rayPlaneY` and `dragOffsetX`/`dragOffsetZ`; Y drag uses `lastMouseY` and `yDragSensitivity`. Draw calls `Draw(selectionVisible)` so the outline and arrows are only drawn when the terminal is open and an object is selected.
+- **Commands:** `cmd spawn <type> <x> <y> <z> [sx sy sz]` adds a primitive; `cmd save` writes the current scene to YAML; `cmd newscene` clears and saves an empty scene.
+
+---
+
 ## In-game command system
 
 The terminal interprets lines that start with **`cmd `** (space required) as commands. The rest of the line is tokenized by spaces; the first token is the **subcommand** name, the rest are **flags and arguments** for that subcommand.
@@ -116,6 +129,9 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `memalloc` | `--hide` | Hide the memory allocation display. |
 | `window` | `--fullscreen` | Switch to fullscreen. |
 | `window` | `--windowed` | Switch to windowed mode. |
+| `spawn` | `<type> <x> <y> <z> [sx sy sz]` | Add a primitive (cube, sphere, cylinder, plane) at position; optional scale. |
+| `save` | *(none)* | Write current scene (including runtime-spawned objects) to the scene YAML file. |
+| `newscene` | *(none)* | Clear all primitives and save an empty scene. |
 
 Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage; `cmd window --windowed` to switch to windowed mode; `cmd window --fullscreen` to switch back to fullscreen.
 
