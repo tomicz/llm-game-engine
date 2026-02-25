@@ -100,13 +100,16 @@ func buildSystemPrompt() string {
 		"- save: save current scene to file → [\"save\"]\n" +
 		"- newscene: clear all objects and save empty scene → [\"newscene\"]\n" +
 		"- model: set AI model for future natural-language → [\"model\",\"llama-3.3-70b-versatile\"] or [\"model\",\"gpt-4o-mini\"]\n" +
-		"- physics: enable/disable physics on selected object → [\"physics\",\"on\"] or [\"physics\",\"off\"] (user must select an object first)\n\n" +
+		"- physics: enable/disable physics on selected object → [\"physics\",\"on\"] or [\"physics\",\"off\"] (user must select an object first)\n" +
+		"- delete: remove an object → [\"delete\",\"selected\"] (selected object), [\"delete\",\"look\"] or [\"delete\",\"camera\"] (object camera is looking at), [\"delete\",\"random\"] (random object)\n" +
+		"- download: download image from URL and apply as texture to selected object → [\"download\",\"image\",\"https://example.com/image.png\"] (user must select an object first)\n\n" +
 		"Rules:\n" +
 		"- For \"spawn 100 random primitives at random positions\" or \"add 50 random objects spread around\", use add_objects with type \"random\" and pattern \"random\".\n" +
 		"- For \"spawn 100 cubes\", \"add 50 spheres\", \"30 cubes spread around\", use ONE add_objects action with count and pattern (grid, line, or random for spread around). Do not emit many separate add_object entries.\n" +
 		"- For a single object at a specific position, use add_object with position. For \"gravity off\", \"no gravity\", \"static\", use \"physics\": false.\n" +
 		"- For \"spawn 50 cubes with gravity off\", \"add 20 spheres no gravity\", \"spawn 100 static objects\", use add_objects with \"physics\": false.\n" +
-		"- For \"hide grid\", \"show FPS\", \"save the scene\", \"clear scene\", \"new scene\", \"fullscreen\", \"windowed\", \"show memory\", \"set model to X\", \"enable physics on selected\" etc., use run_cmd with the appropriate args from the list above.\n" +
+		"- For \"hide grid\", \"show FPS\", \"save the scene\", \"clear scene\", \"new scene\", \"fullscreen\", \"windowed\", \"show memory\", \"set model to X\", \"enable physics on selected\", \"delete selected\", \"delete what I'm looking at\", \"delete random object\" etc., use run_cmd with the appropriate args from the list above.\n" +
+		"- For \"download this image\", \"put this texture on the selected object\", \"apply image from URL\", use run_cmd [\"download\",\"image\",\"<url>\"] with the image URL. User must select an object first.\n" +
 		"- Only use types: cube, sphere, cylinder, plane, or random (for add_objects).\n" +
 		"- Reply with only the JSON object."
 }

@@ -56,12 +56,19 @@ func (t *Terminal) Update() {
 	if !t.open {
 		return
 	}
-	for {
-		c := rl.GetCharPressed()
-		if c == 0 {
-			break
+	// Paste: Ctrl+V (Windows/Linux) or Cmd+V (macOS)
+	if rl.IsKeyPressed(rl.KeyV) && (rl.IsKeyDown(rl.KeyLeftControl) || rl.IsKeyDown(rl.KeyRightControl) || rl.IsKeyDown(rl.KeyLeftSuper) || rl.IsKeyDown(rl.KeyRightSuper)) {
+		if pasted := rl.GetClipboardText(); pasted != "" {
+			t.inputBuf += pasted
 		}
-		t.inputBuf += string(rune(c))
+	} else {
+		for {
+			c := rl.GetCharPressed()
+			if c == 0 {
+				break
+			}
+			t.inputBuf += string(rune(c))
+		}
 	}
 	if rl.IsKeyPressed(rl.KeyBackspace) && len(t.inputBuf) > 0 {
 		_, size := utf8.DecodeLastRuneInString(t.inputBuf)

@@ -136,6 +136,8 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `save` | *(none)* | Write current scene (including runtime-spawned objects) to the scene YAML file. |
 | `newscene` | *(none)* | Clear all primitives and save an empty scene. |
 | `model` | `<name>` | Set AI model for natural-language commands (e.g. `cmd model gpt-4o-mini`). Persisted in engine config. |
+| `physics` | `on` \| `off` | Enable or disable physics (gravity/collision) on the selected object. Select an object first (terminal open, click). |
+| `delete` | `selected` \| `look` \| `random` | Remove an object: selected (current selection), look (object camera is looking at), or random. |
 
 Example: `cmd grid --hide` to hide the grid; `cmd fps --show` to show the FPS counter; `cmd memalloc --show` to show memory usage; `cmd window --windowed` to switch to windowed mode; `cmd window --fullscreen` to switch back to fullscreen.
 

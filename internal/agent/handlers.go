@@ -11,8 +11,9 @@ import (
 
 var primitiveTypes = []string{"cube", "sphere", "cylinder", "plane"}
 
-// RegisterSceneHandlers registers add_object, add_objects, and run_cmd handlers that use the given scene and command registry.
-func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry) {
+// PendingRunCmd, when non-nil, queues run_cmd args to be executed on the main thread (e.g. to avoid calling raylib from a goroutine).
+// If nil, run_cmd is executed in the caller's goroutine.
+func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, pendingRunCmd chan<- []string) {
 	a.RegisterHandler("add_object", func(payload map[string]interface{}) error {
 		typ, _ := payload["type"].(string)
 		if typ == "" {
@@ -113,6 +114,10 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry) {
 				return fmt.Errorf("args must be strings")
 			}
 			strs = append(strs, s)
+		}
+		if pendingRunCmd != nil {
+			pendingRunCmd <- strs
+			return nil
 		}
 		return reg.Execute(strs)
 	})

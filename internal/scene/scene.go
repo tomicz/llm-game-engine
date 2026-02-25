@@ -2,6 +2,7 @@ package scene
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 
@@ -41,6 +42,13 @@ var scenePaths = []string{
 	"../../assets/scenes/default.yaml",
 }
 
+// textureBasePaths are tried as prefixes when loading an object's texture path (e.g. run from cmd/game vs repo root).
+var textureBasePaths = []string{
+	"",
+	"assets/textures/",
+	"../../assets/textures/",
+}
+
 // SceneData is the YAML format for a scene: list of object instances.
 type SceneData struct {
 	Objects []ObjectInstance `yaml:"objects"`
@@ -48,11 +56,13 @@ type SceneData struct {
 
 // ObjectInstance describes one object in the scene: type (e.g. cube), position, optional scale.
 // Physics: nil or true = falls and collides; false = static (no gravity, still blocks others). Omit in YAML = physics on.
+// Texture: optional path to an image file (e.g. assets/textures/downloaded/foo.png); loaded and applied as albedo when set.
 type ObjectInstance struct {
 	Type     string     `yaml:"type"`
 	Position [3]float32 `yaml:"position"`
 	Scale    [3]float32 `yaml:"scale,omitempty"`
 	Physics  *bool      `yaml:"physics,omitempty"`
+	Texture  string     `yaml:"texture,omitempty"`
 }
 
 // Scene holds a 3D camera and draws the 3D world. Update runs camera logic (e.g. free camera);
@@ -87,6 +97,8 @@ type Scene struct {
 	skyboxTexLoc    int32
 	// 3D physics: AABB bodies in 1:1 with scene objects. Stepped only when terminal is closed (game mode).
 	physicsWorld *physics.World
+	// textureCache: path -> GPU texture for object albedo. Loaded lazily in Draw when object has Texture set.
+	textureCache map[string]rl.Texture2D
 }
 
 // New returns a scene with a perspective camera looking at the origin.
@@ -104,6 +116,7 @@ func New() *Scene {
 	s.primitives = primitives.NewRegistry()
 	s.selectedIndex = -1 // no selection until user selects in terminal mode
 	s.physicsWorld = physics.NewWorld()
+	s.textureCache = make(map[string]rl.Texture2D)
 	s.loadScene()
 	s.ensurePhysicsBodies()
 	s.loadSkybox()
@@ -199,6 +212,121 @@ func (s *Scene) SetSelectedPhysics(enabled bool) error {
 		return fmt.Errorf("no object selected (click an object with terminal open)")
 	}
 	return s.SetPhysicsForIndex(idx, enabled)
+}
+
+// DeleteObjectAtIndex removes the object at index i and the corresponding physics body.
+// Adjusts selectedIndex if needed (clears or decrements). Returns error if index out of range.
+func (s *Scene) DeleteObjectAtIndex(i int) error {
+	objs := s.sceneData.Objects
+	if i < 0 || i >= len(objs) {
+		return fmt.Errorf("object index %d out of range (0..%d)", i, len(objs)-1)
+	}
+	s.sceneData.Objects = append(objs[:i], objs[i+1:]...)
+	bodies := s.physicsWorld.Bodies
+	if i < len(bodies) {
+		s.physicsWorld.Bodies = append(bodies[:i], bodies[i+1:]...)
+	}
+	if s.selectedIndex == i {
+		s.selectedIndex = -1
+	} else if s.selectedIndex > i {
+		s.selectedIndex--
+	}
+	return nil
+}
+
+// DeleteSelected removes the currently selected object. Returns error if none selected.
+func (s *Scene) DeleteSelected() error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected (click an object with terminal open)")
+	}
+	return s.DeleteObjectAtIndex(idx)
+}
+
+// DeleteAtCameraLook casts a ray from the camera position through the camera target and removes
+// the first object hit. Returns error if no object is hit.
+func (s *Scene) DeleteAtCameraLook() error {
+	objs := s.sceneData.Objects
+	if len(objs) == 0 {
+		return fmt.Errorf("no objects in scene")
+	}
+	dir := rl.Vector3Subtract(s.Camera.Target, s.Camera.Position)
+	dir = rl.Vector3Normalize(dir)
+	ray := rl.Ray{Position: s.Camera.Position, Direction: dir}
+	bestIdx := -1
+	bestDist := float32(1e30)
+	for i := range objs {
+		box := objectAABB(objs[i])
+		hit := rl.GetRayCollisionBox(ray, box)
+		if hit.Hit && hit.Distance > 0 && hit.Distance < bestDist {
+			bestDist = hit.Distance
+			bestIdx = i
+		}
+	}
+	if bestIdx < 0 {
+		return fmt.Errorf("no object in view (camera not looking at any object)")
+	}
+	return s.DeleteObjectAtIndex(bestIdx)
+}
+
+// DeleteRandom removes a random object from the scene. Returns error if scene is empty.
+func (s *Scene) DeleteRandom() error {
+	objs := s.sceneData.Objects
+	if len(objs) == 0 {
+		return fmt.Errorf("no objects in scene")
+	}
+	i := rand.Intn(len(objs))
+	return s.DeleteObjectAtIndex(i)
+}
+
+// EnsureTexture loads and caches a texture from path. Path is tried as-is and with textureBasePaths.
+// Returns the texture and true if loaded or already cached; (zero, false) if path is empty or load failed.
+// Safe to call from Draw (loads on first use when GL context exists).
+func (s *Scene) EnsureTexture(path string) (rl.Texture2D, bool) {
+	if path == "" {
+		return rl.Texture2D{}, false
+	}
+	if tex, ok := s.textureCache[path]; ok && rl.IsTextureValid(tex) {
+		return tex, true
+	}
+	var fullPath string
+	for _, base := range textureBasePaths {
+		candidate := filepath.Join(base, path)
+		if base == "" {
+			candidate = path
+		}
+		candidate = filepath.Clean(candidate)
+		if _, err := os.Stat(candidate); err == nil {
+			fullPath = candidate
+			break
+		}
+	}
+	if fullPath == "" {
+		// path as-is (absolute or cwd-relative)
+		if _, err := os.Stat(path); err == nil {
+			fullPath = filepath.Clean(path)
+		}
+	}
+	if fullPath == "" {
+		return rl.Texture2D{}, false
+	}
+	tex := rl.LoadTexture(fullPath)
+	if !rl.IsTextureValid(tex) {
+		return rl.Texture2D{}, false
+	}
+	s.textureCache[path] = tex
+	return tex, true
+}
+
+// SetSelectedTexture sets the texture path on the currently selected object. Path is stored as-is (e.g. assets/textures/downloaded/foo.png).
+// Returns an error if no object is selected.
+func (s *Scene) SetSelectedTexture(path string) error {
+	idx := s.SelectedIndex()
+	if idx < 0 {
+		return fmt.Errorf("no object selected (click an object with terminal open)")
+	}
+	s.sceneData.Objects[idx].Texture = path
+	return nil
 }
 
 // SaveScene writes the current scene (including runtime-spawned objects) to the scene YAML file.
@@ -622,7 +750,15 @@ func (s *Scene) Draw(selectionVisible bool) {
 	lightDir := [3]float32{0.5, 1, 0.5} // direction to light (above-right), for primitive shading
 	s.primitives.SetView(viewPos, lightDir)
 	for i, obj := range s.sceneData.Objects {
-		s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
+		if obj.Texture != "" {
+			if tex, ok := s.EnsureTexture(obj.Texture); ok {
+				s.primitives.DrawWithTexture(obj.Type, obj.Position, obj.Scale, tex)
+			} else {
+				s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
+			}
+		} else {
+			s.primitives.Draw(obj.Type, obj.Position, obj.Scale)
+		}
 		// Outline only in terminal mode and when this object is selected
 		if selectionVisible && s.selectedIndex == i {
 			box := objectAABB(obj)

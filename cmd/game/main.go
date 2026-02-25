@@ -217,6 +217,49 @@ func main() {
 		}
 	})
 
+	// delete: remove an object. Usage: cmd delete selected | look | random
+	deleteFS := flag.NewFlagSet("delete", flag.ContinueOnError)
+	reg.Register("delete", deleteFS, func() error {
+		args := deleteFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd delete selected | look | random")
+		}
+		switch args[0] {
+		case "selected":
+			return scn.DeleteSelected()
+		case "look", "camera":
+			return scn.DeleteAtCameraLook()
+		case "random":
+			return scn.DeleteRandom()
+		default:
+			return fmt.Errorf("use selected, look, or random (e.g. cmd delete selected)")
+		}
+	})
+
+	// download: fetch image from URL and apply to selected object. Usage: cmd download image <url>
+	downloadFS := flag.NewFlagSet("download", flag.ContinueOnError)
+	reg.Register("download", downloadFS, func() error {
+		args := downloadFS.Args()
+		if len(args) < 2 {
+			return fmt.Errorf("usage: cmd download image <url> (select an object first)")
+		}
+		if args[0] != "image" {
+			return fmt.Errorf("usage: cmd download image <url>")
+		}
+		url := args[1]
+		if url == "" {
+			return fmt.Errorf("url is required")
+		}
+		if scn.SelectedIndex() < 0 {
+			return fmt.Errorf("no object selected (click an object with terminal open)")
+		}
+		relPath, err := downloadImage(url, "assets/textures/downloaded")
+		if err != nil {
+			return err
+		}
+		return scn.SetSelectedTexture(relPath)
+	})
+
 	term := terminal.New(log, reg)
 
 	// LLM + agent: natural language -> structured actions -> scene/commands.
@@ -236,9 +279,11 @@ func main() {
 	case openAIKey != "":
 		client = llm.NewOpenAI(openAIKey)
 	}
+	// Commands from the agent (e.g. window) must run on the main thread; queue them here.
+	pendingRunCmd := make(chan []string, 64)
 	if client != nil {
 		ag = agent.New(client, func() string { return currentAIModel })
-		agent.RegisterSceneHandlers(ag, scn, reg)
+		agent.RegisterSceneHandlers(ag, scn, reg, pendingRunCmd)
 	}
 	if ag != nil {
 		term.OnNaturalLanguage = func(line string) {
@@ -279,6 +324,16 @@ func main() {
 	}()
 
 	update := func() {
+		// Run any commands queued by the agent (e.g. window) on the main thread.
+		for {
+			select {
+			case args := <-pendingRunCmd:
+				_ = reg.Execute(args)
+			default:
+				goto done
+			}
+		}
+	done:
 		term.Update()
 		if term.IsOpen() {
 			// Cursor visible: allow selecting and moving primitives (not skybox/grid).
@@ -310,6 +365,7 @@ func main() {
 			Position: obj.Position,
 			Scale:    obj.Scale,
 			Physics:  scene.PhysicsEnabledForObject(obj),
+			Texture:  obj.Texture,
 		})
 		if !uiFontTried {
 			uiFontTried = true

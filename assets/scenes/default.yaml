@@ -1,1 +1,11 @@
-objects: []
+objects:
+    - type: plane
+      position:
+        - 0
+        - 0
+        - 0
+      scale:
+        - 20
+        - 20
+        - 20
+      physics: false
