@@ -6,6 +6,8 @@ You can also extend and control everything via an in-game terminal with explicit
 
 Built with [Go](https://go.dev/) and [raylib-go](https://github.com/gen2brain/raylib-go).
 
+**License:** Apache 2.0 — see [LICENSE](LICENSE).
+
 ---
 
 ## Run
