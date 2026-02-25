@@ -89,6 +89,7 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 		if c, err := parseFloat3(payload["color"]); err == nil && (c[0] != 0 || c[1] != 0 || c[2] != 0) {
 			color = &c
 		}
+		colorRandom := parseBoolOpt(payload["color_random"], false)
 		for i := 0; i < count; i++ {
 			var pos [3]float32
 			switch pattern {
@@ -122,11 +123,21 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 					}
 				}
 			}
+			objColor := color
+			if colorRandom {
+				// Random RGB in 0.35–1.0 so colors stay visible
+				c := [3]float32{
+					0.35 + rand.Float32()*0.65,
+					0.35 + rand.Float32()*0.65,
+					0.35 + rand.Float32()*0.65,
+				}
+				objColor = &c
+			}
 			spawnTyp := typ
 			if randomType {
 				spawnTyp = primitiveTypes[rand.Intn(len(primitiveTypes))]
 			}
-			scn.AddPrimitiveWithPhysics(spawnTyp, pos, objScale, physics, color)
+			scn.AddPrimitiveWithPhysics(spawnTyp, pos, objScale, physics, objColor)
 		}
 		scn.RecordAdd(count)
 		return nil
