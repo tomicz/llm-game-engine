@@ -75,6 +75,9 @@ func (c *Ollama) Complete(ctx context.Context, model, systemPrompt, userMessage 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf("ollama: 404 — is Ollama running? (ollama serve). If yes, pull the model: ollama pull %s", model)
+		}
 		return "", fmt.Errorf("ollama: %s", resp.Status)
 	}
 	var out ollamaChatResponse

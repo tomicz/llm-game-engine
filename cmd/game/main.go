@@ -7,10 +7,12 @@ import (
 	"game-engine/internal/agent"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
+	"game-engine/internal/download"
 	"game-engine/internal/engineconfig"
 	"game-engine/internal/env"
 	"game-engine/internal/fonts"
 	"game-engine/internal/graphics"
+	"game-engine/internal/googlefonts"
 	"game-engine/internal/llm"
 	"game-engine/internal/logger"
 	"game-engine/internal/scene"
@@ -19,6 +21,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -506,8 +509,14 @@ func main() {
 	baseNodes := []*ui.Node{}
 	inspector := ui.NewInspector()
 
-	// font: set or show active UI font (path under assets/fonts/). Usage: cmd font [path]
+	// font: set or show active UI font. Usage: cmd font [name]. If not found locally, downloads from Google Fonts (safe).
 	fontFS := flag.NewFlagSet("font", flag.ContinueOnError)
+	type fontDownloadResult struct {
+		RelPath  string
+		FullPath string
+		Err      error
+	}
+	fontDownloadDone := make(chan *fontDownloadResult, 2)
 	reg.Register("font", fontFS, func() error {
 		args := fontFS.Args()
 		if len(args) < 1 {
@@ -528,7 +537,7 @@ func main() {
 				return nil
 			}
 		}
-		// Search assets/fonts for a .ttf/.otf matching the name (e.g. "Inter", "Google Sans", or wrong path like "Inter/Inter-Regular.ttf")
+		// Search assets/fonts for a .ttf/.otf matching the name (e.g. "Inter", "Google Sans")
 		for _, search := range fonts.SearchCandidates(rel) {
 			if foundRel, fullPath, findErr := fonts.FindFont(search); findErr == nil {
 				if err := uiEngine.LoadFont(fullPath); err == nil {
@@ -541,7 +550,43 @@ func main() {
 				}
 			}
 		}
-		return fmt.Errorf("font not found: %s (place TTF in assets/fonts/ or use a name that matches a file there)", rel)
+		// Not found locally: download from Google Fonts (by name only; no arbitrary URLs)
+		go func() {
+			res := &fontDownloadResult{}
+			defer func() { fontDownloadDone <- res }()
+			downloadURL, err := googlefonts.FetchDownloadURLByFamily(rel)
+			if err != nil {
+				res.Err = err
+				return
+			}
+			var baseDir string
+			for _, d := range []string{"assets/fonts", "../../assets/fonts"} {
+				if err := os.MkdirAll(filepath.Join(d, "downloaded"), 0755); err == nil {
+					baseDir = d
+					break
+				}
+			}
+			if baseDir == "" {
+				res.Err = fmt.Errorf("cannot create assets/fonts/downloaded")
+				return
+			}
+			// Save to downloaded/<family>/ so multiple fonts don't clash
+			folder := googlefonts.NormalizeFamily(rel)[0]
+			downloadDir := filepath.Join(baseDir, "downloaded", folder)
+			if err := os.MkdirAll(downloadDir, 0755); err != nil {
+				res.Err = err
+				return
+			}
+			savedPath, err := download.Download(downloadURL, downloadDir)
+			if err != nil {
+				res.Err = err
+				return
+			}
+			res.RelPath = filepath.ToSlash("downloaded/" + folder + "/" + filepath.Base(savedPath))
+			res.FullPath = savedPath
+		}()
+		log.Log("Downloading font from Google Fonts…")
+		return nil
 	})
 
 	// Load engine font from assets/fonts/ (config: prefs.Font, default Roboto). One font for UI, terminal, and debug.
@@ -598,6 +643,26 @@ func main() {
 			}
 		}
 	doneSkybox:
+		// Apply font from URL download (main thread only).
+		for {
+			select {
+			case res := <-fontDownloadDone:
+				if res.Err != nil {
+					log.Log(res.Err.Error())
+				} else if err := uiEngine.LoadFont(res.FullPath); err != nil {
+					log.Log(err.Error())
+				} else {
+					currentFontPath = res.RelPath
+					term.SetFont(uiEngine.Font())
+					dbg.SetFont(uiEngine.Font())
+					saveEnginePrefs()
+					log.Log("Font set: " + res.RelPath)
+				}
+			default:
+				goto doneFontDownload
+			}
+		}
+	doneFontDownload:
 		term.Update()
 		if term.IsOpen() {
 			// Cursor visible: allow selecting and moving primitives (not skybox/grid).

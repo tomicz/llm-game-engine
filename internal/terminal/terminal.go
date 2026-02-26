@@ -15,12 +15,16 @@ const (
 	prompt            = "> "
 	fontSize          = 20
 	padding           = 8
+	// Number of chat/log lines drawn above the input bar when terminal is open.
+	maxLinesOnScreen = 14
+	lineHeight       = fontSize + 4
 )
 
 var (
 	// Reused every frame when drawing the terminal bar to avoid per-frame color allocations.
-	termBarColor  = rl.NewColor(40, 40, 40, 255)
-	termLineColor = rl.NewColor(80, 80, 80, 255)
+	termBarColor   = rl.NewColor(40, 40, 40, 255)
+	termLineColor  = rl.NewColor(80, 80, 80, 255)
+	termChatBgColor = rl.NewColor(24, 24, 24, 240)
 )
 
 // Terminal is the chat/terminal input bar at the bottom of the screen. It is shown/hidden with ESC.
@@ -100,7 +104,7 @@ func (t *Terminal) Update() {
 	}
 }
 
-// Draw draws the terminal bar at the bottom when open. Call after ClearBackground in the render loop.
+// Draw draws the terminal bar at the bottom when open, and the recent chat/log lines above it.
 // Uses GetScreenWidth/GetScreenHeight so the bar matches the 2D overlay coordinate system (correct in fullscreen).
 func (t *Terminal) Draw() {
 	if !t.open {
@@ -113,6 +117,35 @@ func (t *Terminal) Draw() {
 		barY -= WindowedBarOffset
 	}
 
+	// Chat history area above the bar: last maxLinesOnScreen lines
+	chatHeight := maxLinesOnScreen * lineHeight
+	chatY := barY - chatHeight
+	if chatY < 0 {
+		chatHeight = barY
+		chatY = 0
+	}
+	if chatHeight > 0 {
+		rl.DrawRectangle(0, int32(chatY), int32(screenW), int32(chatHeight), termChatBgColor)
+	}
+	lines := t.log.Lines()
+	start := 0
+	if len(lines) > maxLinesOnScreen {
+		start = len(lines) - maxLinesOnScreen
+	}
+	for i := start; i < len(lines); i++ {
+		y := chatY + (i-start)*lineHeight + padding
+		line := lines[i]
+		if len(line) > 200 {
+			line = line[:197] + "..."
+		}
+		if t.font.Texture.ID != 0 {
+			rl.DrawTextEx(t.font, line, rl.NewVector2(float32(padding), float32(y)), float32(fontSize), 1, rl.LightGray)
+		} else {
+			rl.DrawText(line, int32(padding), int32(y), int32(fontSize), rl.LightGray)
+		}
+	}
+
+	// Input bar
 	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(BarHeight), termBarColor)
 	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, termLineColor)
 

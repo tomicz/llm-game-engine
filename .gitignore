@@ -12,3 +12,6 @@ config/
 
 # Environment (API keys; copy .env.example to .env and fill in)
 .env
+
+# Fonts downloaded from URL (cmd font url <url>); kept locally, not committed
+assets/fonts/downloaded/
