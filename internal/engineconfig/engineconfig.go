@@ -9,22 +9,24 @@ import (
 // EngineConfigPath is the path to the engine config file, relative to the process working directory.
 const EngineConfigPath = "config/engine.json"
 
-// EnginePrefs holds engine-only preferences (debug overlays, grid, AI model, etc.). Persisted across runs.
+// EnginePrefs holds engine-only preferences (debug overlays, grid, AI model, font, etc.). Persisted across runs.
 // In-game save data is separate and handled elsewhere.
 type EnginePrefs struct {
 	ShowFPS      bool   `json:"show_fps"`
 	ShowMemAlloc bool   `json:"show_memalloc"`
 	GridVisible  bool   `json:"grid_visible"`
 	AIModel      string `json:"ai_model,omitempty"`
+	Font         string `json:"font,omitempty"` // path under assets/fonts/ (e.g. Roboto/static/Roboto-Regular.ttf)
 }
 
-// Default returns default engine preferences (debug overlays off, grid on).
+// Default returns default engine preferences (debug overlays off, grid on, Roboto font).
 func Default() EnginePrefs {
 	return EnginePrefs{
 		ShowFPS:      false,
 		ShowMemAlloc: false,
 		GridVisible:  true,
 		AIModel:      "gpt-4o-mini",
+		Font:         "Roboto/static/Roboto-Regular.ttf",
 	}
 }
 

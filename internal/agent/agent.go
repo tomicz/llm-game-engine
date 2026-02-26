@@ -114,7 +114,8 @@ func buildSystemPrompt() string {
 		"- template: spawn preset → [\"template\",\"tree\"] or [\"template\",\"tree\",\"x\",\"y\",\"z\"]\n" +
 		"- download: download image from URL and apply as texture to selected object → [\"download\",\"image\",\"https://example.com/image.png\"] (user must select an object first)\n" +
 		"- texture: apply image file as texture to selected object → [\"texture\",\"<path>\"] e.g. [\"texture\",\"assets/textures/downloaded/foo.png\"] (user must select an object first)\n" +
-		"- skybox: set skybox from image URL (downloads in background, supports panorama/cubemap) → [\"skybox\",\"<url>\"] e.g. [\"skybox\",\"https://example.com/panorama.jpg\"]\n\n" +
+		"- skybox: set skybox from image URL (downloads in background, supports panorama/cubemap) → [\"skybox\",\"<url>\"] e.g. [\"skybox\",\"https://example.com/panorama.jpg\"]\n" +
+		"- font: set UI font (path under assets/fonts/) → [\"font\",\"<path>\"] e.g. [\"font\",\"Roboto/static/Roboto-Bold.ttf\"] or [\"font\",\"Roboto/static/Roboto-Regular.ttf\"]. Path must be a real file path (include .ttf or .otf); do not use display names like \"Google Sans\"—use the actual filename, e.g. \"SomeFolder/GoogleSans-Regular.ttf\".\n\n" +
 		"Rules:\n" +
 		"- For \"spawn 100 random primitives at random positions\" or \"add 50 random objects spread around\", use add_objects with type \"random\" and pattern \"random\".\n" +
 		"- For \"spawn 100 cubes\", \"add 50 spheres\", \"30 cubes spread around\", use ONE add_objects action with count and pattern (grid, line, or random for spread around). Do not emit many separate add_object entries.\n" +
@@ -127,6 +128,7 @@ func buildSystemPrompt() string {
 		"- For \"download this image\", \"apply image from URL\", \"make that a texture from this URL\", use run_cmd [\"download\",\"image\",\"<url>\"] with the image URL. User must select an object first.\n" +
 		"- For \"make it a texture\", \"apply the downloaded image\", \"use this image as texture\", \"put this texture on the selected object\" when the image is already downloaded or user gives a path, use run_cmd [\"texture\",\"<path>\"] with the path (e.g. assets/textures/downloaded/filename.png). User must select an object first.\n" +
 		"- For \"set skybox to this url\", \"change skybox to ...\", \"use this as skybox\", \"download this skybox\", \"skybox from url\", use run_cmd [\"skybox\",\"<url>\"] with the image URL (panorama or cubemap).\n" +
+		"- For \"change font\", \"use Roboto Bold\", \"set font to X\", \"switch to Roboto-Regular\", \"change UI font\", use run_cmd [\"font\",\"<path>\"] with the actual file path under assets/fonts/ including extension (e.g. [\"font\",\"Roboto/static/Roboto-Bold.ttf\"], [\"font\",\"Roboto/static/Roboto-Regular.ttf\"]). If the user says a font name like \"Google Sans\", only use that if you know the exact path (e.g. GoogleSans-Regular.ttf in a folder); otherwise use a path that exists under assets/fonts/ (e.g. Roboto).\n" +
 		"- For \"make it red\", \"color the cube blue\", \"paint selected green\", use run_cmd [\"color\",\"r\",\"g\",\"b\"] with 0-1 values (e.g. red [\"color\",\"1\",\"0\",\"0\"]). User must select first.\n" +
 		"- For \"duplicate this\", \"clone it 5 times\", \"copy the selected object\", use run_cmd [\"duplicate\",\"N\"] (N=1 if not specified). User must select first.\n" +
 		"- For \"take a screenshot\", \"capture the screen\", use run_cmd [\"screenshot\"].\n" +

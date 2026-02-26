@@ -28,11 +28,12 @@ var (
 // Lines starting with "cmd " are parsed as subcommand + flags and executed via the command registry.
 // Other lines are treated as natural language; if OnNaturalLanguage is set, it is called in a goroutine.
 type Terminal struct {
-	log                *logger.Logger
-	reg                *commands.Registry
-	inputBuf           string
-	open               bool
-	OnNaturalLanguage  func(line string) // called in a goroutine when user submits a non-cmd line
+	log               *logger.Logger
+	reg               *commands.Registry
+	inputBuf          string
+	open              bool
+	font              rl.Font // optional; when set, Draw uses DrawTextEx instead of default font
+	OnNaturalLanguage func(line string) // called in a goroutine when user submits a non-cmd line
 }
 
 // New returns a new Terminal that logs lines and runs "cmd ..." through reg. It starts closed (hidden); press ESC to open.
@@ -43,6 +44,11 @@ func New(log *logger.Logger, reg *commands.Registry) *Terminal {
 // IsOpen returns true when the terminal is visible and capturing input (player cannot move).
 func (t *Terminal) IsOpen() bool {
 	return t.open
+}
+
+// SetFont sets the font used to draw the terminal bar (e.g. same as UI). Zero texture ID = use raylib default.
+func (t *Terminal) SetFont(font rl.Font) {
+	t.font = font
 }
 
 // Update handles ESC (toggle open/closed), and when open: typing, backspace, enter. Call once per frame.
@@ -111,5 +117,9 @@ func (t *Terminal) Draw() {
 	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, termLineColor)
 
 	text := prompt + t.inputBuf + "|"
-	rl.DrawText(text, int32(padding), int32(barY+padding), int32(fontSize), rl.White)
+	if t.font.Texture.ID != 0 {
+		rl.DrawTextEx(t.font, text, rl.NewVector2(float32(padding), float32(barY+padding)), float32(fontSize), 1, rl.White)
+	} else {
+		rl.DrawText(text, int32(padding), int32(barY+padding), int32(fontSize), rl.White)
+	}
 }

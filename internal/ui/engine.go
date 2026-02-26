@@ -60,6 +60,11 @@ func (e *Engine) LoadFont(path string) error {
 	return nil
 }
 
+// Font returns the currently loaded font (for use by terminal, debug, etc.). Zero texture ID means no font loaded.
+func (e *Engine) Font() rl.Font {
+	return e.font
+}
+
 // AddNode appends a node. Nodes are drawn in order.
 func (e *Engine) AddNode(n *Node) {
 	e.nodes = append(e.nodes, n)

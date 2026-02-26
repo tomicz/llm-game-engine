@@ -10,6 +10,12 @@ Optional runtime assets. The game runs without these; they enhance the scene whe
 
 Assets are grouped by purpose. Skybox files live in **`assets/skybox/`** so they stay separate from other assets you may add later.
 
+## Fonts (`assets/fonts/`)
+
+- **Purpose:** One font for all engine UI (inspector, terminal, debug).
+- **Formats:** TTF or OTF. Place files in `assets/fonts/` (e.g. `default.ttf`).
+- See **`assets/fonts/README.md`** for details.
+
 ## Skybox (`assets/skybox/`)
 
 - **Files:** `skybox.png` or `skybox.jpg` (place in `assets/skybox/`)

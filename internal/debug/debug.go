@@ -19,6 +19,7 @@ const (
 type Debug struct {
 	ShowFPS       bool
 	ShowMemAlloc  bool
+	font          rl.Font // optional; when set, Draw uses DrawTextEx instead of default font
 	frameCount    uint32
 	lastFpsText   string
 	lastMemText   string
@@ -38,6 +39,11 @@ func (d *Debug) SetShowFPS(show bool) {
 // SetShowMemAlloc sets whether the memory allocation counter is drawn (top-right, under FPS).
 func (d *Debug) SetShowMemAlloc(show bool) {
 	d.ShowMemAlloc = show
+}
+
+// SetFont sets the font used to draw FPS/Mem (e.g. same as UI). Zero texture ID = use raylib default.
+func (d *Debug) SetFont(font rl.Font) {
+	d.font = font
 }
 
 // Draw renders any enabled debug overlays. Call after scene and terminal in the draw loop.
@@ -63,9 +69,15 @@ func (d *Debug) Draw() {
 		}
 		text := d.lastFpsText
 		if text != "" {
-			w := rl.MeasureText(text, fpsFontSize)
-			x := screenW - w - fpsPadding
-			rl.DrawText(text, x, y, fpsFontSize, rl.Green)
+			if d.font.Texture.ID != 0 {
+				sz := float32(fpsFontSize)
+				pos := rl.NewVector2(float32(screenW)-rl.MeasureTextEx(d.font, text, sz, 1).X-float32(fpsPadding), float32(y))
+				rl.DrawTextEx(d.font, text, pos, sz, 1, rl.Green)
+			} else {
+				w := rl.MeasureText(text, fpsFontSize)
+				x := screenW - w - fpsPadding
+				rl.DrawText(text, x, y, fpsFontSize, rl.Green)
+			}
 		}
 		y += fpsLineHeight
 	}
@@ -78,9 +90,15 @@ func (d *Debug) Draw() {
 		}
 		text := d.lastMemText
 		if text != "" {
-			w := rl.MeasureText(text, fpsFontSize)
-			x := screenW - w - fpsPadding
-			rl.DrawText(text, x, y, fpsFontSize, rl.Green)
+			if d.font.Texture.ID != 0 {
+				sz := float32(fpsFontSize)
+				pos := rl.NewVector2(float32(screenW)-rl.MeasureTextEx(d.font, text, sz, 1).X-float32(fpsPadding), float32(y))
+				rl.DrawTextEx(d.font, text, pos, sz, 1, rl.Green)
+			} else {
+				w := rl.MeasureText(text, fpsFontSize)
+				x := screenW - w - fpsPadding
+				rl.DrawText(text, x, y, fpsFontSize, rl.Green)
+			}
 		}
 	}
 }

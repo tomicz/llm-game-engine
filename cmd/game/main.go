@@ -9,6 +9,7 @@ import (
 	"game-engine/internal/debug"
 	"game-engine/internal/engineconfig"
 	"game-engine/internal/env"
+	"game-engine/internal/fonts"
 	"game-engine/internal/graphics"
 	"game-engine/internal/llm"
 	"game-engine/internal/logger"
@@ -18,7 +19,6 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
-	"runtime"
 	"strconv"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -50,12 +50,17 @@ func main() {
 	if currentAIModel == "" {
 		currentAIModel = "gpt-4o-mini"
 	}
+	currentFontPath := prefs.Font
+	if currentFontPath == "" {
+		currentFontPath = "Roboto/static/Roboto-Regular.ttf"
+	}
 	saveEnginePrefs := func() {
 		_ = engineconfig.Save(engineconfig.EnginePrefs{
 			ShowFPS:      dbg.ShowFPS,
 			ShowMemAlloc: dbg.ShowMemAlloc,
 			GridVisible:  scn.GridVisible,
 			AIModel:      currentAIModel,
+			Font:         currentFontPath,
 		})
 	}
 	// If only Groq is configured, default to a Groq model so natural language works without cmd model.
@@ -501,19 +506,52 @@ func main() {
 	baseNodes := []*ui.Node{}
 	inspector := ui.NewInspector()
 
-	// Try loading a TTF font for UI (smooth text). Attempt once after first frame (window exists).
-	uiFontTried := false
-	uiFontPaths := func() []string {
-		paths := []string{"assets/ui/fonts/default.ttf", "../../assets/ui/fonts/default.ttf"}
-		switch runtime.GOOS {
-		case "darwin":
-			paths = append(paths, "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc")
-		case "windows":
-			paths = append(paths, "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\segoeui.ttf")
-		default:
-			paths = append(paths, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")
+	// font: set or show active UI font (path under assets/fonts/). Usage: cmd font [path]
+	fontFS := flag.NewFlagSet("font", flag.ContinueOnError)
+	reg.Register("font", fontFS, func() error {
+		args := fontFS.Args()
+		if len(args) < 1 {
+			log.Log("Current font: " + currentFontPath)
+			return nil
 		}
-		return paths
+		rel := args[0]
+		// If the LLM sent a path that already includes assets/fonts/, strip it so we don't double-prefix
+		rel = fonts.StripAssetsFontsPrefix(rel)
+		// Try direct path first (e.g. Roboto/static/Roboto-Regular.ttf)
+		for _, p := range []string{"assets/fonts/" + rel, "../../assets/fonts/" + rel} {
+			if err := uiEngine.LoadFont(p); err == nil {
+				currentFontPath = rel
+				term.SetFont(uiEngine.Font())
+				dbg.SetFont(uiEngine.Font())
+				saveEnginePrefs()
+				log.Log("Font set: " + rel)
+				return nil
+			}
+		}
+		// Search assets/fonts for a .ttf/.otf matching the name (e.g. "Inter", "Google Sans", or wrong path like "Inter/Inter-Regular.ttf")
+		for _, search := range fonts.SearchCandidates(rel) {
+			if foundRel, fullPath, findErr := fonts.FindFont(search); findErr == nil {
+				if err := uiEngine.LoadFont(fullPath); err == nil {
+					currentFontPath = foundRel
+					term.SetFont(uiEngine.Font())
+					dbg.SetFont(uiEngine.Font())
+					saveEnginePrefs()
+					log.Log("Font set: " + foundRel)
+					return nil
+				}
+			}
+		}
+		return fmt.Errorf("font not found: %s (place TTF in assets/fonts/ or use a name that matches a file there)", rel)
+	})
+
+	// Load engine font from assets/fonts/ (config: prefs.Font, default Roboto). One font for UI, terminal, and debug.
+	uiFontTried := false
+	engineFontPaths := func() []string {
+		rel := currentFontPath
+		return []string{
+			"assets/fonts/" + rel,
+			"../../assets/fonts/" + rel,
+		}
 	}()
 
 	update := func() {
@@ -521,7 +559,9 @@ func main() {
 		for {
 			select {
 			case args := <-pendingRunCmd:
-				_ = reg.Execute(args)
+				if err := reg.Execute(args); err != nil {
+					log.Log(err.Error())
+				}
 			default:
 				goto done
 			}
@@ -593,8 +633,10 @@ func main() {
 		})
 		if !uiFontTried {
 			uiFontTried = true
-			for _, p := range uiFontPaths {
+			for _, p := range engineFontPaths {
 				if err := uiEngine.LoadFont(p); err == nil {
+					term.SetFont(uiEngine.Font())
+					dbg.SetFont(uiEngine.Font())
 					break
 				}
 			}
