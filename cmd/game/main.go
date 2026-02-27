@@ -23,7 +23,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/tomicz/speak-to-agent/vttlib"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -198,8 +200,13 @@ func main() {
 	})
 
 	// model: set AI model for natural-language commands. Usage: cmd model <name> (e.g. cmd model gpt-4o-mini)
+	// When using Ollama, model cannot be changed (prevents voice/LLM from switching model by accident).
+	var isOllama bool // set in LLM client switch below
 	modelFS := flag.NewFlagSet("model", flag.ContinueOnError)
 	reg.Register("model", modelFS, func() error {
+		if isOllama {
+			return fmt.Errorf("cannot change model when using Ollama (disabled to prevent voice/LLM from switching by accident)")
+		}
 		args := modelFS.Args()
 		if len(args) < 1 {
 			return fmt.Errorf("usage: cmd model <name> (e.g. cmd model gpt-4o-mini)")
@@ -457,6 +464,18 @@ func main() {
 
 	term := terminal.New(log, reg)
 
+	// Voice-to-text: Cmd+R to record; release to transcribe and send to LLM. Root path for vtt module.
+	var vttRoot string
+	for _, p := range []string{"modules/voice-to-text", "../../modules/voice-to-text"} {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			vttRoot, _ = filepath.Abs(p)
+			break
+		}
+	}
+	var voiceRecording bool
+	var voiceRec *vttlib.Recorder
+	var wasCmdRDown bool
+
 	// LLM + agent: natural language -> structured actions -> scene/commands.
 	// Priority: Groq (free) > Cursor (+ OpenAI fallback) > OpenAI > Ollama (local, e.g. Qwen 3 Coder).
 	var ag *agent.Agent
@@ -476,8 +495,11 @@ func main() {
 		client = llm.NewOpenAI(openAIKey)
 	default:
 		client = llm.NewOllama(ollamaBase)
-		if currentAIModel == "" || currentAIModel == "gpt-4o-mini" {
-			currentAIModel = "qwen2.5-coder"
+		isOllama = true
+		// Use Ollama default when no model set or when saved model is a cloud name (e.g. from when Groq was used).
+		if currentAIModel == "" || currentAIModel == "gpt-4o-mini" || currentAIModel == "llama-3.3-70b-versatile" {
+			currentAIModel = "qwen3-coder:30b"
+			saveEnginePrefs()
 		}
 	}
 	// Commands from the agent (e.g. window) must run on the main thread; queue them here.
@@ -664,6 +686,60 @@ func main() {
 		}
 	doneFontDownload:
 		term.Update()
+
+		// Voice: hold Cmd+R to record; release to transcribe and send to chat (with logs).
+		combo := (rl.IsKeyDown(rl.KeyLeftSuper) || rl.IsKeyDown(rl.KeyRightSuper)) && rl.IsKeyDown(rl.KeyR)
+		if combo && !wasCmdRDown && !voiceRecording && vttRoot != "" {
+			rec, err := vttlib.NewRecorder(vttRoot)
+			if err != nil {
+				log.Log("Voice: " + err.Error())
+			} else if err := rec.Start(); err != nil {
+				log.Log("Voice: " + err.Error())
+			} else {
+				voiceRec = rec
+				voiceRecording = true
+				log.Log("Voice: recording…")
+			}
+		}
+		if combo && !wasCmdRDown && !voiceRecording && vttRoot == "" {
+			log.Log("Voice: modules/voice-to-text not found (run from repo root?)")
+		}
+		if !combo && wasCmdRDown && voiceRecording {
+			voiceRecording = false
+			rec := voiceRec
+			voiceRec = nil
+			if rec != nil {
+				if err := rec.Stop(); err != nil {
+					log.Log("Voice: stop error: " + err.Error())
+				} else {
+					log.Log("Voice: stopped, transcribing…")
+					go func() {
+						text, err := rec.Transcribe(context.Background())
+						if err != nil {
+							log.Log("Voice: " + err.Error())
+							return
+						}
+						text = strings.TrimSpace(text)
+						if text == "" {
+							return
+						}
+						log.Log("Voice (transcript): " + text)
+						// Skip sending very short / noise transcripts to avoid random LLM actions (e.g. "you").
+						const minSendLen = 5
+						if len(text) < minSendLen {
+							log.Log("Voice (skipped, too short; not sent to chat): " + text)
+							return
+						}
+						log.Log("Voice (sent to chat): " + text)
+						if term.OnNaturalLanguage != nil {
+							term.OnNaturalLanguage(text)
+						}
+					}()
+				}
+			}
+		}
+		wasCmdRDown = combo
+
 		if term.IsOpen() {
 			// Cursor visible: allow selecting and moving primitives (not skybox/grid).
 			scn.UpdateEditor(true, terminal.BarHeight)
@@ -708,6 +784,25 @@ func main() {
 		}
 		uiEngine.SetNodes(nodes)
 		uiEngine.Draw()
+		// Recording indicator: only when chat is collapsed and voice is recording
+		if !term.IsOpen() && voiceRecording {
+			screenH := int(rl.GetScreenHeight())
+			y := screenH - 32
+			if !rl.IsWindowFullscreen() {
+				y -= terminal.WindowedBarOffset
+			}
+			x := 16
+			// Red dot
+			rl.DrawCircle(int32(x+6), int32(y+8), 6, rl.Red)
+			rl.DrawCircleLines(int32(x+6), int32(y+8), 6, rl.Maroon)
+			// "Recording" text
+			recText := "Recording..."
+			if uiEngine.Font().Texture.ID != 0 {
+				rl.DrawTextEx(uiEngine.Font(), recText, rl.NewVector2(float32(x+20), float32(y+2)), 18, 1, rl.Red)
+			} else {
+				rl.DrawText(recText, int32(x+20), int32(y+2), 18, rl.Red)
+			}
+		}
 		term.Draw()
 	}
 	graphics.Run(update, draw)

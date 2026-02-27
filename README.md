@@ -114,6 +114,15 @@ When you type a line **without** `cmd `, it is sent to an LLM (if an API key is 
 
 **Available shapes** for the LLM are only **cube, sphere, cylinder, plane**. The LLM composes them to represent other things (e.g. tree = cylinder + sphere). Model choice is set with `cmd model <name>` and persisted.
 
+### Voice input (hold Cmd+R)
+
+- **Record:** Hold **Cmd+R** (Mac) or **Super+R** (Linux) to record from the microphone; release to stop. The audio is transcribed (Whisper via `modules/voice-to-text`) and the text is sent to the chat/LLM as if you had typed it.
+- **Recording indicator:** When the chat is closed and you are recording, a red “Recording...” indicator appears at the bottom-left; it hides when the chat is open or when you stop recording.
+- **Logs:** Terminal/chat logs show `Voice (transcript): ...` and `Voice (sent to chat): ...` (or “skipped, too short” for very short transcripts). Short transcripts (&lt; 5 chars) are not sent to the LLM to avoid accidental actions.
+- **Ollama:** When using Ollama, `cmd model` cannot change the model (prevents voice/LLM from switching it by accident). Default Ollama model is `qwen3-coder:30b`.
+
+See [docs/VOICE.md](docs/VOICE.md) for implementation details and submodule setup.
+
 ### UI (CSS overlay)
 
 - **Primitive CSS UI:** A minimal CSS-driven layer (see [docs/UI.md](docs/UI.md)). Styles live in `assets/ui/` (e.g. `default.css`). Selectors: `.class`, `#id`. Properties: background, color, border, width, height, left/top (pixels or %). Nodes are created in code; draw order is Scene → Debug → UI → Terminal (terminal on top when enabled).
@@ -140,12 +149,13 @@ The engine turns **natural-language** input into game actions by calling an LLM 
 
 ## Project layout
 
-- **`cmd/game/`** — Entry point; wires logger, terminal, scene, graphics, agent, and commands.
+- **`cmd/game/`** — Entry point; wires logger, terminal, scene, graphics, agent, commands, and voice (Cmd+R).
 - **`internal/`** — Engine packages: `graphics`, `scene`, `primitives`, `terminal`, `commands`, `agent`, `llm`, `debug`, `engineconfig`, `logger`, `ui`, `env`.
 - **`internal/agent/`** — Natural language → LLM → structured actions (`add_object`, `add_objects`, `run_cmd`); dispatches to the same handlers used by `cmd` commands.
 - **`internal/llm/`** — LLM client (Groq, OpenAI, Cursor, Ollama).
+- **`modules/voice-to-text/`** — Voice-to-text: `vttlib` (in-process record/transcribe) and `cmd/vtt` CLI. See [docs/VOICE.md](docs/VOICE.md); can be a Git submodule.
 - **`assets/`** — Optional runtime assets: skybox under `assets/skybox/`, UI under `assets/ui/`, primitives/scenes under `assets/primitives/`, `assets/scenes/`.
-- **`docs/`** — [ARCHITECTURE.md](docs/ARCHITECTURE.md), [UI.md](docs/UI.md), and other docs.
+- **`docs/`** — [ARCHITECTURE.md](docs/ARCHITECTURE.md), [VOICE.md](docs/VOICE.md), [UI.md](docs/UI.md), and other docs.
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
