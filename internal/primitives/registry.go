@@ -15,17 +15,71 @@ type cached struct {
 // Registry maps primitive type names to mesh+material. Meshes are created on first use
 // so that GPU resources are allocated after the window/OpenGL context exists.
 type Registry struct {
-	cache    map[string]cached
-	viewPos  [3]float32 // camera position, set each frame for lighting
-	lightDir [3]float32 // direction to light (normalized), set each frame
+	cache          map[string]cached
+	viewPos        [3]float32 // camera position, set each frame for lighting
+	lightDir       [3]float32 // direction to light (normalized), set each frame
+	terrainUVScale [2]float32 // UV tiling for terrain mesh (u,v); defaults to (1,1)
 }
 
 // NewRegistry returns a registry with no primitives. Cube is created on first Draw.
 func NewRegistry() *Registry {
 	return &Registry{
-		cache:    make(map[string]cached),
-		lightDir: [3]float32{0.5, 1, 0.5}, // default: from above-right
+		cache:          make(map[string]cached),
+		lightDir:       [3]float32{0.5, 1, 0.5}, // default: from above-right
+		terrainUVScale: [2]float32{1, 1},
 	}
+}
+
+// SetTerrainMesh replaces the cached terrain mesh and materials. Used for optimized
+// heightmapped terrain so we draw a single deformed plane instead of many cubes.
+// Safe to call multiple times; previous terrain GPU resources are released.
+func (r *Registry) SetTerrainMesh(mesh rl.Mesh) {
+	if c, ok := r.cache["terrain"]; ok {
+		rl.UnloadMesh(&c.mesh)
+		rl.UnloadMaterial(c.mtl)
+		rl.UnloadMaterial(c.texturedMtl)
+		delete(r.cache, "terrain")
+	}
+	mtl := rl.LoadMaterialDefault()
+	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = defaultPrimitiveColor
+	}
+	shader := loadLitShader()
+	if rl.IsShaderValid(shader) {
+		mtl.Shader = shader
+	}
+	texturedMtl := rl.LoadMaterialDefault()
+	if albedo := texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = rl.White
+	}
+	if ts := loadLitTexturedShader(); rl.IsShaderValid(ts) {
+		texturedMtl.Shader = ts
+	}
+	r.cache["terrain"] = cached{mesh: mesh, mtl: mtl, texturedMtl: texturedMtl}
+	r.terrainUVScale = [2]float32{1, 1}
+}
+
+// ClearTerrain removes the terrain mesh from the cache and unloads GPU resources.
+// Call when the terrain object is deleted so the mesh can be freed.
+func (r *Registry) ClearTerrain() {
+	if c, ok := r.cache["terrain"]; ok {
+		rl.UnloadMesh(&c.mesh)
+		rl.UnloadMaterial(c.mtl)
+		rl.UnloadMaterial(c.texturedMtl)
+		delete(r.cache, "terrain")
+	}
+}
+
+// SetTerrainUVScale sets how many times the terrain texture repeats across the X/Z extent.
+// For example, (4,4) tiles the texture 4x4 across the heightmap; (1,1) is the default (stretched).
+func (r *Registry) SetTerrainUVScale(u, v float32) {
+	if u <= 0 {
+		u = 1
+	}
+	if v <= 0 {
+		v = 1
+	}
+	r.terrainUVScale = [2]float32{u, v}
 }
 
 // SetView sets camera position and direction-to-light for this frame. Call once per frame
@@ -223,9 +277,11 @@ uniform float lightIntensity;
 uniform float specularPower;
 uniform float specularStrength;
 uniform sampler2D albedoMap;
+uniform vec2 uvScale;
 out vec4 finalColor;
 void main() {
-  vec4 texColor = texture(albedoMap, fragTexCoord);
+  vec2 uv = fragTexCoord * uvScale;
+  vec4 texColor = texture(albedoMap, uv);
   vec4 tint = texColor * colDiffuse;
   vec3 N = normalize(fragNormal);
   vec3 L = normalize(lightDir);
@@ -357,6 +413,10 @@ func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32,
 	if !ok {
 		return
 	}
+	// For terrain we want the texture to repeat when UVs go beyond 0-1.
+	if key == "terrain" {
+		rl.SetTextureWrap(tex, rl.TextureWrapRepeat)
+	}
 	rl.SetMaterialTexture(&c.texturedMtl, rl.MapAlbedo, tex)
 	if albedo := c.texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
 		albedo.Color = tintToColor(tint)
@@ -367,6 +427,14 @@ func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32,
 	}
 	r.setLitShaderUniforms(c.texturedMtl.Shader)
 	r.setColDiffuse(c.texturedMtl.Shader, defaultTint)
+	// UV tiling: terrain can repeat its texture; other primitives use (1,1).
+	uv := [2]float32{1, 1}
+	if key == "terrain" {
+		uv = r.terrainUVScale
+	}
+	if loc := rl.GetShaderLocation(c.texturedMtl.Shader, "uvScale"); loc >= 0 {
+		rl.SetShaderValueV(c.texturedMtl.Shader, loc, uv[:], rl.ShaderUniformVec2, 1)
+	}
 	sx, sy, sz := scale[0], scale[1], scale[2]
 	if sx == 0 {
 		sx = 1
@@ -407,6 +475,8 @@ func (r *Registry) Draw(primType string, position, scale [3]float32, tint *[4]fl
 	case "plane":
 		r.ensurePlane()
 		r.drawCached("plane", position, scale, [3]float32{0, 0, 0}, tint)
+	case "terrain":
+		r.drawCached("terrain", position, scale, [3]float32{0, 0, 0}, tint)
 	default:
 		// Unknown type; skip.
 	}
@@ -432,6 +502,8 @@ func (r *Registry) DrawWithTexture(primType string, position, scale [3]float32, 
 	case "plane":
 		r.ensurePlane()
 		r.drawCachedWithTexture("plane", position, scale, [3]float32{0, 0, 0}, tex, tint)
+	case "terrain":
+		r.drawCachedWithTexture("terrain", position, scale, [3]float32{0, 0, 0}, tex, tint)
 	default:
 		r.Draw(primType, position, scale, tint)
 	}

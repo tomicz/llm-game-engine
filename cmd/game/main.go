@@ -15,6 +15,7 @@ import (
 	"game-engine/internal/googlefonts"
 	"game-engine/internal/llm"
 	"game-engine/internal/logger"
+	"game-engine/internal/mapgen"
 	"game-engine/internal/scene"
 	"game-engine/internal/terminal"
 	"game-engine/internal/ui"
@@ -245,7 +246,7 @@ func main() {
 		if len(args) < 1 {
 			return fmt.Errorf("usage: cmd delete selected | look | random | name <name> | left|right|top|bottom | [color] <type> [position] | all [type|name]")
 		}
-		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true, "terrain": true}
 		positionWords := map[string]bool{"left": true, "right": true, "top": true, "bottom": true, "closest": true, "farthest": true}
 		colorNames := map[string][3]float32{
 			"red": {1, 0, 0}, "green": {0, 1, 0}, "blue": {0, 0, 1}, "yellow": {1, 1, 0},
@@ -357,7 +358,7 @@ func main() {
 		if len(args) < 1 {
 			return fmt.Errorf("usage: cmd select none | left|right|top|bottom|closest|farthest | [color] <type> [position] | <name_substring> [position]")
 		}
-		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true, "terrain": true}
 		positionWords := map[string]bool{"left": true, "right": true, "top": true, "bottom": true, "closest": true, "farthest": true}
 		colorNames := map[string][3]float32{
 			"red": {1, 0, 0}, "green": {0, 1, 0}, "blue": {0, 0, 1}, "yellow": {1, 1, 0},
@@ -419,7 +420,7 @@ func main() {
 		if len(args) < 1 {
 			return fmt.Errorf("usage: cmd look left|right|top|bottom|closest|farthest | [color] <type> [position] | <name_substring> [position]")
 		}
-		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true, "terrain": true}
 		positionWords := map[string]bool{"left": true, "right": true, "top": true, "bottom": true, "closest": true, "farthest": true}
 		colorNames := map[string][3]float32{
 			"red": {1, 0, 0}, "green": {0, 1, 0}, "blue": {0, 0, 1}, "yellow": {1, 1, 0},
@@ -691,6 +692,64 @@ func main() {
 			return fmt.Errorf("gravity must be a number")
 		}
 		scn.SetGravity([3]float32{0, float32(f), 0})
+		return nil
+	})
+
+	// heightmap: procedurally generate a random height map made of cubes on a grid.
+	// Usage: cmd heightmap [--w N] [--d N] [--tile SIZE] [--h HEIGHT] [--seed S]
+	// Example: cmd heightmap --w 48 --d 48 --tile 1 --h 4
+	var hmWidth, hmDepth int
+	var hmTileSize, hmMaxHeight float64
+	var hmSeed int64
+	heightmapFS := flag.NewFlagSet("heightmap", flag.ContinueOnError)
+	heightmapFS.IntVar(&hmWidth, "w", 0, "width in tiles (default from engine)")
+	heightmapFS.IntVar(&hmDepth, "d", 0, "depth in tiles (default from engine)")
+	heightmapFS.Float64Var(&hmTileSize, "tile", 0, "tile size on X/Z (world units, default from engine)")
+	heightmapFS.Float64Var(&hmMaxHeight, "h", 0, "max height (world units, default from engine)")
+	heightmapFS.Int64Var(&hmSeed, "seed", 0, "random seed (0 = random)")
+	reg.Register("heightmap", heightmapFS, func() error {
+		opts := mapgen.DefaultHeightMapOptions()
+		if hmWidth > 0 {
+			opts.Width = hmWidth
+		}
+		if hmDepth > 0 {
+			opts.Depth = hmDepth
+		}
+		if hmTileSize > 0 {
+			opts.TileSize = float32(hmTileSize)
+		}
+		if hmMaxHeight > 0 {
+			opts.HeightScale = float32(hmMaxHeight)
+		}
+		if hmSeed != 0 {
+			opts.Seed = hmSeed
+		}
+
+		if err := mapgen.ApplyHeightmapTerrain(scn, opts); err != nil {
+			return err
+		}
+		log.Log(fmt.Sprintf("Heightmap generated (terrain mesh %dx%d).", opts.Width, opts.Depth))
+		return nil
+	})
+
+	// terrain_repeat: set how many times the terrain texture repeats across the heightmap.
+	// Usage: cmd terrain_repeat <u> <v> (e.g. cmd terrain_repeat 4 4). Default is 1 1 (stretched).
+	terrainRepeatFS := flag.NewFlagSet("terrain_repeat", flag.ContinueOnError)
+	reg.Register("terrain_repeat", terrainRepeatFS, func() error {
+		args := terrainRepeatFS.Args()
+		if len(args) < 2 {
+			return fmt.Errorf("usage: cmd terrain_repeat <u> <v> (e.g. cmd terrain_repeat 4 4)")
+		}
+		u, err1 := strconv.ParseFloat(args[0], 32)
+		v, err2 := strconv.ParseFloat(args[1], 32)
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("terrain_repeat: u and v must be numbers")
+		}
+		if u <= 0 || v <= 0 {
+			return fmt.Errorf("terrain_repeat: u and v must be > 0")
+		}
+		scn.SetTerrainTextureRepeat(float32(u), float32(v))
+		log.Log(fmt.Sprintf("Terrain texture repeat set to %.2fx, %.2fy.", u, v))
 		return nil
 	})
 

@@ -161,6 +161,8 @@ type Scene struct {
 	lastUndo *undoRecord
 	// viewAwareness: optional camera object-awareness; when set, updated each frame and can log enter/exit.
 	viewAwareness *ViewAwareness
+	// terrainEnabled: when true, draw optimized heightmapped terrain mesh (single deformed plane).
+	terrainEnabled bool
 }
 
 // getLightDir returns the current light direction (normalized). Used by Draw.
@@ -305,6 +307,9 @@ func (s *Scene) DeleteObjectAtIndex(i int) error {
 	if i < 0 || i >= len(objs) {
 		return fmt.Errorf("object index %d out of range (0..%d)", i, len(objs)-1)
 	}
+	if objs[i].Type == "terrain" {
+		s.clearTerrain()
+	}
 	s.sceneData.Objects = append(objs[:i], objs[i+1:]...)
 	bodies := s.physicsWorld.Bodies
 	if i < len(bodies) {
@@ -401,7 +406,7 @@ func (s *Scene) DeleteVisibleByDescription(typ string, colorOptional *[3]float32
 
 // visibleMatchFilters returns visible objects that match type (or any if typ empty), optional color, and optional name substring.
 func visibleMatchFilters(visible []VisibleObject, typ string, colorOptional *[3]float32, nameSubstring string) []VisibleObject {
-	primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+	primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true, "terrain": true}
 	if typ != "" && !primTypes[typ] {
 		return nil
 	}
@@ -750,6 +755,58 @@ func (s *Scene) SetLighting(profile string) {
 	}
 }
 
+// SetTerrainTextureRepeat controls how many times the terrain texture repeats across
+// the heightmap in U (X) and V (Z). For example, (4,4) tiles the texture 4x4; (1,1)
+// is the default (stretched once across the terrain).
+func (s *Scene) SetTerrainTextureRepeat(u, v float32) {
+	s.primitives.SetTerrainUVScale(u, v)
+}
+
+// EnableTerrain installs a custom terrain mesh in the primitives registry and enables
+// drawing of a single deformed plane as optimized heightmap terrain. size is (width, heightScale, depth) in world units;
+// the terrain object is given this scale and centered position so it can be selected by clicking anywhere on the mesh.
+func (s *Scene) EnableTerrain(mesh rl.Mesh, size [3]float32) {
+	s.primitives.SetTerrainMesh(mesh)
+	s.terrainEnabled = true
+	for _, obj := range s.sceneData.Objects {
+		if obj.Type == "terrain" {
+			// Update existing terrain object's scale/position to match new size so selection works
+			idx := s.terrainObjectIndex()
+			if idx >= 0 {
+				s.sceneData.Objects[idx].Scale = size
+				s.sceneData.Objects[idx].Position = [3]float32{0, size[1] / 2, 0}
+			}
+			return
+		}
+	}
+	static := false
+	s.sceneData.Objects = append(s.sceneData.Objects, ObjectInstance{
+		Type:     "terrain",
+		Position: [3]float32{0, size[1] / 2, 0},
+		Scale:    size,
+		Physics:  &static,
+	})
+}
+
+// terrainObjectIndex returns the index of the first object with Type "terrain", or -1.
+func (s *Scene) terrainObjectIndex() int {
+	for i := range s.sceneData.Objects {
+		if s.sceneData.Objects[i].Type == "terrain" {
+			return i
+		}
+	}
+	return -1
+}
+
+// clearTerrain disables terrain drawing and frees the terrain mesh. Call when the terrain object is deleted.
+func (s *Scene) clearTerrain() {
+	if !s.terrainEnabled {
+		return
+	}
+	s.terrainEnabled = false
+	s.primitives.ClearTerrain()
+}
+
 // DuplicateSelected clones the selected object n times with a small position offset. Returns count duplicated.
 func (s *Scene) DuplicateSelected(n int, offset [3]float32) (int, error) {
 	idx := s.SelectedIndex()
@@ -1048,7 +1105,11 @@ func scaleForPhysics(s [3]float32) [3]float32 {
 }
 
 // scaleForPhysicsBody returns the scale used for the physics AABB. Planes use Y = planeDefaultScaleY (0.1) for a thin collider.
+// Terrain uses the object's scale (world size of the heightmap) so the static collider matches the mesh.
 func scaleForPhysicsBody(obj ObjectInstance) [3]float32 {
+	if obj.Type == "terrain" {
+		return scaleForPhysics(obj.Scale)
+	}
 	s := scaleForPhysics(obj.Scale)
 	if obj.Type == "plane" {
 		s[1] = planeDefaultScaleY
@@ -1384,7 +1445,43 @@ func (s *Scene) Draw(selectionVisible bool) {
 	viewPos := [3]float32{s.Camera.Position.X, s.Camera.Position.Y, s.Camera.Position.Z}
 	lightDir := s.getLightDir()
 	s.primitives.SetView(viewPos, lightDir)
+	// Optimized terrain: single deformed plane mesh rendered before objects, using the terrain object's texture and color.
+	if s.terrainEnabled {
+		var terrainTint *[4]float32
+		var terrainTex string
+		for _, obj := range s.sceneData.Objects {
+			if obj.Type == "terrain" {
+				if obj.Color[0] != 0 || obj.Color[1] != 0 || obj.Color[2] != 0 {
+					t := [4]float32{obj.Color[0], obj.Color[1], obj.Color[2], 1}
+					terrainTint = &t
+				}
+				terrainTex = obj.Texture
+				break
+			}
+		}
+		pos := [3]float32{0, 0, 0}
+		scale := [3]float32{1, 1, 1}
+		if terrainTex != "" {
+			if tex, ok := s.EnsureTexture(terrainTex); ok {
+				s.primitives.DrawWithTexture("terrain", pos, scale, tex, terrainTint)
+			} else {
+				s.primitives.Draw("terrain", pos, scale, terrainTint)
+			}
+		} else {
+			s.primitives.Draw("terrain", pos, scale, terrainTint)
+		}
+	}
 	for i, obj := range s.sceneData.Objects {
+		if obj.Type == "terrain" {
+			// Terrain mesh already drawn above; only draw selection outline if selected.
+			if selectionVisible && s.selectedIndex == i {
+				drawPos := s.motionPosition(obj, i)
+				box := objectAABBAt(obj, drawPos)
+				rl.DrawBoundingBox(box, rl.Yellow)
+				drawGizmoArrows(drawPos)
+			}
+			continue
+		}
 		drawPos := s.motionPosition(obj, i)
 		var tint *[4]float32
 		if obj.Color[0] != 0 || obj.Color[1] != 0 || obj.Color[2] != 0 {
