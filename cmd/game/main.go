@@ -46,6 +46,11 @@ func main() {
 	dbg := debug.New()
 	reg := commands.NewRegistry()
 
+	// Optional: camera object-awareness — log when objects enter/leave view. Set CAMERA_AWARENESS=1 to enable.
+	if os.Getenv("CAMERA_AWARENESS") == "1" {
+		scn.EnableViewAwareness(scene.NewViewAwarenessWithLogging())
+	}
+
 	// Apply persisted engine prefs (debug overlays, grid, AI model). Save on every toggle.
 	prefs, _ := engineconfig.Load()
 	dbg.SetShowFPS(prefs.ShowFPS)
@@ -233,13 +238,21 @@ func main() {
 		}
 	})
 
-	// delete: remove an object. Usage: cmd delete selected | look | random | name <name>
+	// delete: remove object(s). With camera awareness: delete plane | delete red cube | delete right | delete cube left | delete all cube | delete all building
 	deleteFS := flag.NewFlagSet("delete", flag.ContinueOnError)
 	reg.Register("delete", deleteFS, func() error {
 		args := deleteFS.Args()
 		if len(args) < 1 {
-			return fmt.Errorf("usage: cmd delete selected | look | random | name <name>")
+			return fmt.Errorf("usage: cmd delete selected | look | random | name <name> | left|right|top|bottom | [color] <type> [position] | all [type|name]")
 		}
+		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+		positionWords := map[string]bool{"left": true, "right": true, "top": true, "bottom": true, "closest": true, "farthest": true}
+		colorNames := map[string][3]float32{
+			"red": {1, 0, 0}, "green": {0, 1, 0}, "blue": {0, 0, 1}, "yellow": {1, 1, 0},
+			"orange": {1, 0.5, 0}, "purple": {0.5, 0, 0.5}, "pink": {1, 0.75, 0.8},
+			"white": {1, 1, 1}, "black": {0, 0, 0}, "gray": {0.5, 0.5, 0.5}, "grey": {0.5, 0.5, 0.5},
+		}
+
 		switch args[0] {
 		case "selected":
 			return scn.DeleteSelected()
@@ -253,9 +266,235 @@ func main() {
 			}
 			_, err := scn.DeleteByName(args[1])
 			return err
-		default:
-			return fmt.Errorf("use selected, look, random, or name <name>")
+		case "all":
+			// delete all [type] | delete all [color] [type] | delete all <name_substring>
+			if len(args) < 2 {
+				n, err := scn.DeleteAllVisibleByDescription("", nil, "")
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Deleted %d object(s) in view.\n", n)
+				return nil
+			}
+			if len(args) == 2 {
+				a1 := strings.ToLower(args[1])
+				if primTypes[a1] {
+					n, err := scn.DeleteAllVisibleByDescription(a1, nil, "")
+					if err != nil {
+						return err
+					}
+					fmt.Printf("Deleted %d %s(s) in view.\n", n, a1)
+					return nil
+				}
+				// name substring (e.g. "building")
+				n, err := scn.DeleteAllVisibleByDescription("", nil, a1)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Deleted %d object(s) matching %q in view.\n", n, a1)
+				return nil
+			}
+			if len(args) == 3 {
+				colorName := strings.ToLower(args[1])
+				typ := strings.ToLower(args[2])
+				if primTypes[typ] {
+					if c, ok := colorNames[colorName]; ok {
+						n, err := scn.DeleteAllVisibleByDescription(typ, &c, "")
+						if err != nil {
+							return err
+						}
+						fmt.Printf("Deleted %d %s %s(s) in view.\n", n, colorName, typ)
+						return nil
+					}
+				}
+			}
+			return fmt.Errorf("usage: cmd delete all [type] or delete all [color] [type] or delete all <name_substring>")
 		}
+
+		// Position-only: delete left | delete right | etc.
+		if len(args) == 1 && positionWords[strings.ToLower(args[0])] {
+			return scn.DeleteVisibleByPosition(strings.ToLower(args[0]))
+		}
+
+		// One word: type only
+		if len(args) == 1 {
+			typ := strings.ToLower(args[0])
+			if primTypes[typ] {
+				return scn.DeleteVisibleByDescription(typ, nil)
+			}
+			return fmt.Errorf("use selected, look, random, name <name>, left|right|top|bottom, [color] <type> [position], or all [type|name]")
+		}
+
+		// Two words: type + position, or color + type, or name substring + position
+		if len(args) == 2 {
+			a0, a1 := strings.ToLower(args[0]), strings.ToLower(args[1])
+			if primTypes[a0] && positionWords[a1] {
+				return scn.DeleteVisibleByDescriptionAndPosition(a0, nil, "", a1)
+			}
+			if c, ok := colorNames[a0]; ok && primTypes[a1] {
+				return scn.DeleteVisibleByDescription(a1, &c)
+			}
+			// name substring + position (e.g. "building right")
+			if positionWords[a1] {
+				return scn.DeleteVisibleByDescriptionAndPosition("", nil, a0, a1)
+			}
+		}
+
+		if len(args) == 3 {
+			a0, a1, a2 := strings.ToLower(args[0]), strings.ToLower(args[1]), strings.ToLower(args[2])
+			if c, ok := colorNames[a0]; ok && primTypes[a1] && positionWords[a2] {
+				return scn.DeleteVisibleByDescriptionAndPosition(a1, &c, "", a2)
+			}
+		}
+
+		return fmt.Errorf("use selected, look, random, name <name>, left|right|top|bottom, [color] <type> [position], or all [type|name]")
+	})
+
+	// select: choose object in view by description/position (updates scene selection).
+	selectFS := flag.NewFlagSet("select", flag.ContinueOnError)
+	reg.Register("select", selectFS, func() error {
+		args := selectFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd select none | left|right|top|bottom|closest|farthest | [color] <type> [position] | <name_substring> [position]")
+		}
+		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+		positionWords := map[string]bool{"left": true, "right": true, "top": true, "bottom": true, "closest": true, "farthest": true}
+		colorNames := map[string][3]float32{
+			"red": {1, 0, 0}, "green": {0, 1, 0}, "blue": {0, 0, 1}, "yellow": {1, 1, 0},
+			"orange": {1, 0.5, 0}, "purple": {0.5, 0, 0.5}, "pink": {1, 0.75, 0.8},
+			"white": {1, 1, 1}, "black": {0, 0, 0}, "gray": {0.5, 0.5, 0.5}, "grey": {0.5, 0.5, 0.5},
+		}
+
+		switch strings.ToLower(args[0]) {
+		case "none":
+			scn.ClearSelection()
+			return nil
+		}
+
+		// Position-only: select left | select right | etc.
+		if len(args) == 1 && positionWords[strings.ToLower(args[0])] {
+			return scn.SelectVisibleByPosition(strings.ToLower(args[0]))
+		}
+
+		// One word: type or name substring
+		if len(args) == 1 {
+			a0 := strings.ToLower(args[0])
+			if primTypes[a0] {
+				return scn.SelectVisibleByDescriptionAndPosition(a0, nil, "", "")
+			}
+			// treat as name substring (e.g. "building")
+			return scn.SelectVisibleByDescriptionAndPosition("", nil, a0, "")
+		}
+
+		// Two words: type + position, or color + type, or name substring + position
+		if len(args) == 2 {
+			a0, a1 := strings.ToLower(args[0]), strings.ToLower(args[1])
+			if primTypes[a0] && positionWords[a1] {
+				return scn.SelectVisibleByDescriptionAndPosition(a0, nil, "", a1)
+			}
+			if c, ok := colorNames[a0]; ok && primTypes[a1] {
+				return scn.SelectVisibleByDescriptionAndPosition(a1, &c, "", "")
+			}
+			// name substring + position (e.g. "building right")
+			if positionWords[a1] {
+				return scn.SelectVisibleByDescriptionAndPosition("", nil, a0, a1)
+			}
+		}
+
+		// Three words: color + type + position
+		if len(args) == 3 {
+			a0, a1, a2 := strings.ToLower(args[0]), strings.ToLower(args[1]), strings.ToLower(args[2])
+			if c, ok := colorNames[a0]; ok && primTypes[a1] && positionWords[a2] {
+				return scn.SelectVisibleByDescriptionAndPosition(a1, &c, "", a2)
+			}
+		}
+
+		return fmt.Errorf("usage: cmd select none | left|right|top|bottom|closest|farthest | [color] <type> [position] | <name_substring> [position]")
+	})
+
+	// look: point camera at a visible object by description/position (does not change selection).
+	lookFS := flag.NewFlagSet("look", flag.ContinueOnError)
+	reg.Register("look", lookFS, func() error {
+		args := lookFS.Args()
+		if len(args) < 1 {
+			return fmt.Errorf("usage: cmd look left|right|top|bottom|closest|farthest | [color] <type> [position] | <name_substring> [position]")
+		}
+		primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+		positionWords := map[string]bool{"left": true, "right": true, "top": true, "bottom": true, "closest": true, "farthest": true}
+		colorNames := map[string][3]float32{
+			"red": {1, 0, 0}, "green": {0, 1, 0}, "blue": {0, 0, 1}, "yellow": {1, 1, 0},
+			"orange": {1, 0.5, 0}, "purple": {0.5, 0, 0.5}, "pink": {1, 0.75, 0.8},
+			"white": {1, 1, 1}, "black": {0, 0, 0}, "gray": {0.5, 0.5, 0.5}, "grey": {0.5, 0.5, 0.5},
+		}
+
+		// Position-only: look left | look right | etc.
+		if len(args) == 1 && positionWords[strings.ToLower(args[0])] {
+			return scn.FocusOnVisibleByPosition(strings.ToLower(args[0]))
+		}
+
+		// One word: type or name substring (closest)
+		if len(args) == 1 {
+			a0 := strings.ToLower(args[0])
+			if primTypes[a0] {
+				return scn.FocusOnVisibleByDescriptionAndPosition(a0, nil, "", "")
+			}
+			// treat as name substring
+			return scn.FocusOnVisibleByDescriptionAndPosition("", nil, a0, "")
+		}
+
+		// Two words: type + position, or color + type, or name substring + position
+		if len(args) == 2 {
+			a0, a1 := strings.ToLower(args[0]), strings.ToLower(args[1])
+			if primTypes[a0] && positionWords[a1] {
+				return scn.FocusOnVisibleByDescriptionAndPosition(a0, nil, "", a1)
+			}
+			if c, ok := colorNames[a0]; ok && primTypes[a1] {
+				return scn.FocusOnVisibleByDescriptionAndPosition(a1, &c, "", "")
+			}
+			if positionWords[a1] {
+				return scn.FocusOnVisibleByDescriptionAndPosition("", nil, a0, a1)
+			}
+		}
+
+		// Three words: color + type + position
+		if len(args) == 3 {
+			a0, a1, a2 := strings.ToLower(args[0]), strings.ToLower(args[1]), strings.ToLower(args[2])
+			if c, ok := colorNames[a0]; ok && primTypes[a1] && positionWords[a2] {
+				return scn.FocusOnVisibleByDescriptionAndPosition(a1, &c, "", a2)
+			}
+		}
+
+		return fmt.Errorf("usage: cmd look left|right|top|bottom|closest|farthest | [color] <type> [position] | <name_substring> [position]")
+	})
+
+	// inspect: print details about an object (type, name, position, scale, color, physics, motion, texture).
+	// Usage: cmd inspect            (selected, or closest visible if none selected)
+	inspectFS := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	reg.Register("inspect", inspectFS, func() error {
+		args := inspectFS.Args()
+		printInfo := func(label string, obj scene.ObjectInstance) {
+			fmt.Printf("%s: type=%s name=%q pos=[%.2f,%.2f,%.2f] scale=[%.2f,%.2f,%.2f] color=[%.2f,%.2f,%.2f] physics=%v motion=%q texture=%q\n",
+				label,
+				obj.Type, obj.Name,
+				obj.Position[0], obj.Position[1], obj.Position[2],
+				obj.Scale[0], obj.Scale[1], obj.Scale[2],
+				obj.Color[0], obj.Color[1], obj.Color[2],
+				scene.PhysicsEnabledForObject(obj), obj.Motion, obj.Texture)
+		}
+		if len(args) == 0 {
+			if obj, ok := scn.SelectedObject(); ok {
+				printInfo("Selected", obj)
+				return nil
+			}
+			visible := scn.ObjectsInView()
+			if len(visible) == 0 {
+				return fmt.Errorf("no objects in view")
+			}
+			v := visible[0] // closest
+			printInfo("Closest in view", v.Object)
+			return nil
+		}
+		return fmt.Errorf("usage: cmd inspect (no arguments)")
 	})
 
 	// download: fetch image from URL in background and apply to selected object when done. Usage: cmd download image <url>
@@ -420,6 +659,26 @@ func main() {
 		return scn.FocusOnSelected()
 	})
 
+	// view: list objects currently visible to the camera (object-awareness)
+	viewFS := flag.NewFlagSet("view", flag.ContinueOnError)
+	reg.Register("view", viewFS, func() error {
+		visible := scn.ObjectsInView()
+		if len(visible) == 0 {
+			fmt.Println("No objects in view. Move the camera to look at primitives.")
+			return nil
+		}
+		fmt.Printf("%d object(s) in view (closest first):\n", len(visible))
+		for _, v := range visible {
+			name := v.Object.Name
+			if name == "" {
+				name = fmt.Sprintf("#%d", v.Index)
+			}
+			fmt.Printf("  %s — %s — distance %.2f — screen (%.0f, %.0f)\n",
+				name, v.Object.Type, v.Distance, v.ScreenPos.X, v.ScreenPos.Y)
+		}
+		return nil
+	})
+
 	// gravity: set gravity strength/direction. Usage: cmd gravity <y> (e.g. -9.8, 0, 4.9 for low, 0 for float)
 	gravityFS := flag.NewFlagSet("gravity", flag.ContinueOnError)
 	reg.Register("gravity", gravityFS, func() error {
@@ -509,9 +768,10 @@ func main() {
 		agent.RegisterSceneHandlers(ag, scn, reg, pendingRunCmd)
 	}
 	if ag != nil {
-		term.OnNaturalLanguage = func(line string) {
+		term.GetViewContext = func() string { return scn.GetViewContextSummary() }
+		term.OnNaturalLanguage = func(line string, viewContext string) {
 			log.Log("Thinking…")
-			summary, err := ag.Run(context.Background(), line)
+			summary, err := ag.Run(context.Background(), line, viewContext)
 			if err != nil {
 				log.Log(err.Error())
 			} else {
@@ -713,6 +973,11 @@ func main() {
 					log.Log("Voice: stop error: " + err.Error())
 				} else {
 					log.Log("Voice: stopped, transcribing…")
+					viewCtx := ""
+					if term.GetViewContext != nil {
+						viewCtx = term.GetViewContext()
+					}
+					viewCtxCopy := viewCtx
 					go func() {
 						text, err := rec.Transcribe(context.Background())
 						if err != nil {
@@ -732,7 +997,7 @@ func main() {
 						}
 						log.Log("Voice (sent to chat): " + text)
 						if term.OnNaturalLanguage != nil {
-							term.OnNaturalLanguage(text)
+							term.OnNaturalLanguage(text, viewCtxCopy)
 						}
 					}()
 				}

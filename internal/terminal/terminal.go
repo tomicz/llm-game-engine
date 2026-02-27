@@ -31,13 +31,16 @@ var (
 // When open, it handles typing and drawing; when closed, nothing is drawn and the player can move (WASD).
 // Lines starting with "cmd " are parsed as subcommand + flags and executed via the command registry.
 // Other lines are treated as natural language; if OnNaturalLanguage is set, it is called in a goroutine.
+// GetViewContext, if set, is called on the main thread when the user submits natural language; its result
+// is passed as the second argument so the LLM can reason about what the camera sees (e.g. "delete the one on the right").
 type Terminal struct {
 	log               *logger.Logger
 	reg               *commands.Registry
 	inputBuf          string
 	open              bool
 	font              rl.Font // optional; when set, Draw uses DrawTextEx instead of default font
-	OnNaturalLanguage func(line string) // called in a goroutine when user submits a non-cmd line
+	GetViewContext    func() string       // optional; called on main thread when user submits NL
+	OnNaturalLanguage func(line string, viewContext string) // called in a goroutine when user submits a non-cmd line
 }
 
 // New returns a new Terminal that logs lines and runs "cmd ..." through reg. It starts closed (hidden); press ESC to open.
@@ -96,8 +99,12 @@ func (t *Terminal) Update() {
 				t.log.Log(err.Error())
 			}
 		} else if t.OnNaturalLanguage != nil {
-			t.log.Log(line)
-			go t.OnNaturalLanguage(line)
+			viewCtx := ""
+			if t.GetViewContext != nil {
+				viewCtx = t.GetViewContext()
+			}
+			viewCtxCopy := viewCtx
+			go t.OnNaturalLanguage(line, viewCtxCopy)
 		} else {
 			t.log.Log(line)
 		}

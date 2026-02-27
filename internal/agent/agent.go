@@ -37,14 +37,20 @@ func (a *Agent) RegisterHandler(actionType string, h Handler) {
 }
 
 // Run sends the user message to the LLM, parses the JSON response, and applies each action.
+// viewContext is optional: when non-empty (e.g. current camera view summary), it is prepended to the
+// user message so the LLM can reason about what the user sees (e.g. "delete the one on the right").
 // Returns a short summary for the terminal log, or an error.
-func (a *Agent) Run(ctx context.Context, userMessage string) (summary string, err error) {
+func (a *Agent) Run(ctx context.Context, userMessage string, viewContext string) (summary string, err error) {
 	model := a.getModel()
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
 	systemPrompt := buildSystemPrompt()
-	reply, err := a.client.Complete(ctx, model, systemPrompt, userMessage)
+	prompt := userMessage
+	if viewContext != "" {
+		prompt = "Current camera view: " + viewContext + "\n\nUser: " + userMessage
+	}
+	reply, err := a.client.Complete(ctx, model, systemPrompt, prompt)
 	if err != nil {
 		return "", err
 	}
@@ -101,7 +107,7 @@ func buildSystemPrompt() string {
 		"- newscene: clear all objects and save empty scene → [\"newscene\"]\n" +
 		"- model: set AI model for future natural-language → [\"model\",\"llama-3.3-70b-versatile\"] or [\"model\",\"gpt-4o-mini\"]\n" +
 		"- physics: enable/disable physics on selected object → [\"physics\",\"on\"] or [\"physics\",\"off\"] (user must select an object first)\n" +
-		"- delete: remove object → [\"delete\",\"selected\"] | [\"delete\",\"look\"] | [\"delete\",\"random\"] | [\"delete\",\"name\",\"<name>\"]\n" +
+		"- delete: remove object(s). [\"delete\",\"selected\"] | [\"delete\",\"look\"] | [\"delete\",\"random\"] | [\"delete\",\"name\",\"<name>\"] | [\"delete\",\"left\"|\"right\"|\"top\"|\"bottom\"|\"closest\"|\"farthest\"] | [\"delete\",\"<type>\"] | [\"delete\",\"<color>\",\"<type>\"] | [\"delete\",\"<type>\",\"<position>\"] (e.g. [\"delete\",\"cube\",\"right\"]) | [\"delete\",\"<color>\",\"<type>\",\"<position>\"] | [\"delete\",\"all\"] | [\"delete\",\"all\",\"<type>\"] | [\"delete\",\"all\",\"<name_substring>\"] (e.g. delete all buildings = [\"delete\",\"all\",\"building\"]). Position = left, right, top, bottom, closest, farthest. When the user says \"on the right\" or \"to the left\", use position. When they say \"all buildings\" or \"every cube in view\", use delete all.\n" +
 		"- color: set selected object RGB (0-1) → [\"color\",\"1\",\"0\",\"0\"] for red (user must select first)\n" +
 		"- duplicate: clone selected N times → [\"duplicate\",\"5\"] (user must select first)\n" +
 		"- screenshot: capture view → [\"screenshot\"]\n" +
@@ -140,6 +146,9 @@ func buildSystemPrompt() string {
 		"- For \"zero gravity\", \"reverse gravity\", \"low gravity\", use run_cmd [\"gravity\",\"0\"] or [\"gravity\",\"4.9\"] etc.\n" +
 		"- For \"spawn a tree\", \"add a tree\", \"place a tree at 0 0 0\", compose it from primitives: use two add_object actions—one cylinder (trunk, e.g. position [x,y,z], scale [0.3,2,0.3]) and one sphere (foliage, e.g. position [x,y+1.5,z], scale [1.2,1.2,1.2]), physics false.\n" +
 		"- For \"delete the object named X\", \"remove Tower\", use run_cmd [\"delete\",\"name\",\"<name>\"].\n" +
+		"- For \"delete the plane\", \"remove the red cube\", \"delete that cube\", use run_cmd [\"delete\",\"<type>\"] or [\"delete\",\"<color>\",\"<type>\"] (e.g. [\"delete\",\"plane\"], [\"delete\",\"red\",\"cube\"]). No selection needed.\n" +
+		"- For \"delete the one on the right\", \"remove the building on the left\", \"delete the cube to the right\", use run_cmd [\"delete\",\"right\"] or [\"delete\",\"<type>\",\"right\"] or [\"delete\",\"<name_substring>\",\"right\"] (positions: left, right, top, bottom, closest, farthest). Use the Current camera view in the prompt to pick the right position.\n" +
+		"- For \"delete all buildings in view\", \"remove every cube I see\", \"get rid of all the spheres\", use run_cmd [\"delete\",\"all\"] (all in view) or [\"delete\",\"all\",\"<type>\"] or [\"delete\",\"all\",\"<name_substring>\"] (e.g. [\"delete\",\"all\",\"building\"], [\"delete\",\"all\",\"cube\"]). \"Buildings\" often means objects named with \"building\" or cubes in a city; use [\"delete\",\"all\",\"building\"] or [\"delete\",\"all\",\"cube\"] as appropriate.\n" +
 		"- Only use types: cube, sphere, cylinder, plane, or random (for add_objects).\n" +
 		"- Reply with only the JSON object."
 }

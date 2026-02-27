@@ -40,14 +40,16 @@ Assets (e.g. skybox, UI CSS) are loaded from `assets/`; see [assets/README.md](a
 
 When the terminal is open (ESC), the scene is in **editor mode**:
 
-- **Select:** Click an object. Selected object shows a **yellow bounding box** and **red (X), green (Y), blue (Z) direction arrows**.
+- **Selection:** Click an object. Selected object shows a **yellow bounding box** and **red (X), green (Y), blue (Z) direction arrows**. You can also **select by description** without clicking: `cmd select right`, `cmd select cube`, `cmd select building right`, etc. (see Objects: spawn, delete…).
 - **Move:** Drag by face. **Top/bottom face** → move on the XZ plane (horizontal). **Side face** → move vertically (Y). The point you click stays under the cursor.
 - **Skybox and grid** are not selectable.
 
 ### Camera
 
 - **Free camera:** Move and look around the 3D world (WASD / mouse or equivalent).
-- **Focus:** Command to point the camera at the selected object (`cmd focus`; select an object first).
+- **Focus:** Point the camera at the selected object (`cmd focus`; select an object first).
+- **Look at:** Point the camera at a visible object by description—no selection needed. `cmd look right` | `cmd look cube` | `cmd look building` | `cmd look red cube right` (positions: left, right, top, bottom, closest, farthest).
+- **Object awareness:** The camera can report what it’s looking at. Use `cmd view` to list primitives currently in view (name, type, distance, screen position). For dynamic enter/leave logging, run with `CAMERA_AWARENESS=1`. When you use **natural language** (e.g. “delete the building on the right”, “delete all cubes in view”), the engine injects a **current view summary** into the prompt so the LLM can choose the right command (e.g. `delete right`, `delete all cube`).
 
 ### Grid and debug
 
@@ -64,7 +66,9 @@ When the terminal is open (ESC), the scene is in **editor mode**:
 ### Objects: spawn, delete, duplicate, undo
 
 - **Spawn one:** `cmd spawn <type> <x> <y> <z> [sx sy sz]` (e.g. `cmd spawn cube 0 0 0` or `cmd spawn sphere 1 0 1 2 2 2`).
-- **Delete:** `cmd delete selected` | `cmd delete look` | `cmd delete random` | `cmd delete name <name>`.
+- **Delete:** `cmd delete selected` | `cmd delete look` | `cmd delete random` | `cmd delete name <name>` | **`cmd delete plane`** | **`cmd delete red cube`** | **`cmd delete left`** / **`cmd delete right`** (position in view) | **`cmd delete cube right`** (type + position) | **`cmd delete all`** / **`cmd delete all cube`** / **`cmd delete all building`** (bulk by type or name). Camera must be looking at the relevant object(s); no selection needed for view-based delete.
+- **Select by view:** `cmd select none` | `cmd select left` / `right` / `top` / `bottom` / `closest` / `farthest` | `cmd select cube` | `cmd select building` | `cmd select red cube` | `cmd select building right`. Chooses the matching visible object as the current selection (then use color, name, duplicate, etc.).
+- **Inspect:** `cmd inspect` prints type, name, position, scale, color, physics, motion, and texture for the selected object (or the closest object in view if none selected).
 - **Duplicate:** `cmd duplicate [N]` clones the selected object N times (default 1). Select first.
 - **Undo:** `cmd undo` reverts the last add or delete (one level).
 

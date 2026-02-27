@@ -137,7 +137,11 @@ The terminal interprets lines that start with **`cmd `** (space required) as com
 | `newscene` | *(none)* | Clear all primitives and save an empty scene. |
 | `model` | `<name>` | Set AI model for natural-language commands (e.g. `cmd model gpt-4o-mini`). Persisted in engine config. |
 | `physics` | `on` \| `off` | Enable or disable physics (gravity/collision) on the selected object. Select an object first (terminal open, click). |
-| `delete` | `selected` \| `look` \| `random` \| `name <name>` | Remove an object: selected, look (camera target), random, or by name. |
+| `delete` | `selected` \| `look` \| `random` \| `name <name>` \| `left` \| `right` \| … \| `all [type\|name]` | Remove object(s). With camera awareness: by position (`left`, `right`, `top`, `bottom`, `closest`, `farthest`), by type/color (`plane`, `red cube`), by type+position (`cube right`), by name substring+position (`building right`), or bulk (`all`, `all cube`, `all building`). |
+| `select` | `none` \| `left` \| `right` \| … \| `[color] <type> [position]` \| `<name_substring> [position]` | Set selection to a visible object by position, type, color+type, or name substring (e.g. `select building right`). No click required. |
+| `look` | `left` \| `right` \| … \| `[color] <type> [position]` \| `<name_substring> [position]` | Point camera target at a visible object by position/type/name (does not change selection). |
+| `inspect` | *(none)* | Print type, name, position, scale, color, physics, motion, texture for selected object (or closest in view if none selected). |
+| `view` | *(none)* | List objects currently in the camera view (name, type, distance, screen position); sorted by distance. |
 | `color` | `<r> <g> <b>` (0-1) | Set RGB color on the selected object (e.g. `cmd color 1 0 0` for red). Select first. |
 | `duplicate` | `[N]` (default 1) | Clone the selected object N times with offset. Select first. |
 | `screenshot` | *(none)* | Capture the current view to `screenshot.png` in the working directory. |

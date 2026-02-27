@@ -2,10 +2,13 @@ package scene
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"game-engine/internal/physics"
 	"game-engine/internal/primitives"
@@ -72,6 +75,52 @@ type ObjectInstance struct {
 	Motion   string     `yaml:"motion,omitempty"` // "spin" | "bob" | ""
 }
 
+// VisibleObject describes one scene object currently in the camera's view.
+// Used by camera object-awareness: ObjectsInView and ViewAwareness.
+type VisibleObject struct {
+	Index         int             // index in scene objects
+	Object        ObjectInstance
+	Distance      float32         // distance from camera position
+	ScreenPos     rl.Vector2      // 2D position on screen (object center)
+	DrawPosition  [3]float32      // world position used for drawing (e.g. with motion)
+}
+
+// ViewAwareness holds state for camera object-awareness and optional logging.
+// When attached to a scene and updated each frame, it can detect when objects
+// enter or leave the camera view and call OnEnterView/OnLeaveView.
+type ViewAwareness struct {
+	// lastVisible is the set of object indices that were in view last frame.
+	lastVisible map[int]struct{}
+	// OnEnterView is called when an object index enters the camera view (optional).
+	OnEnterView func(index int, obj ObjectInstance, distance float32)
+	// OnLeaveView is called when an object index leaves the camera view (optional).
+	OnLeaveView func(index int, obj ObjectInstance)
+	// OnUpdate is called every frame with the current list of visible objects (optional).
+	// Use for logging or documenting "what the camera sees" at a given time.
+	OnUpdate func(visible []VisibleObject)
+}
+
+// NewViewAwarenessWithLogging returns a ViewAwareness that logs enter/leave to the standard logger.
+// Optionally set OnUpdate for per-frame "what the camera sees" (can be noisy).
+func NewViewAwarenessWithLogging() *ViewAwareness {
+	return &ViewAwareness{
+		OnEnterView: func(index int, obj ObjectInstance, distance float32) {
+			name := obj.Name
+			if name == "" {
+				name = fmt.Sprintf("#%d", index)
+			}
+			log.Printf("[camera] enter view: %s (%s) at %.2f", name, obj.Type, distance)
+		},
+		OnLeaveView: func(index int, obj ObjectInstance) {
+			name := obj.Name
+			if name == "" {
+				name = fmt.Sprintf("#%d", index)
+			}
+			log.Printf("[camera] leave view: %s (%s)", name, obj.Type)
+		},
+	}
+}
+
 // Scene holds a 3D camera and draws the 3D world. Update runs camera logic (e.g. free camera);
 // Draw renders between BeginMode3D and EndMode3D. Based on raylib examples/core/core_3d_camera_free.
 type Scene struct {
@@ -110,6 +159,8 @@ type Scene struct {
 	lightDir [3]float32
 	// lastUndo: one level of undo (add or delete).
 	lastUndo *undoRecord
+	// viewAwareness: optional camera object-awareness; when set, updated each frame and can log enter/exit.
+	viewAwareness *ViewAwareness
 }
 
 // getLightDir returns the current light direction (normalized). Used by Draw.
@@ -313,6 +364,289 @@ func (s *Scene) DeleteRandom() error {
 	i := rand.Intn(len(objs))
 	s.RecordDelete([]ObjectInstance{objs[i]})
 	return s.DeleteObjectAtIndex(i)
+}
+
+// DeleteVisibleByDescription deletes the closest object in the camera view that matches the given type
+// and optional color. typ must be one of: cube, sphere, cylinder, plane. If colorOptional is nil,
+// any color matches. If set, the object's Color (0-1 RGB) must be approximately equal (per-channel
+// tolerance 0.35); objects with no color set (zero) do not match a color filter.
+// Returns error if no matching object is in view.
+func (s *Scene) DeleteVisibleByDescription(typ string, colorOptional *[3]float32) error {
+	visible := s.ObjectsInView()
+	for _, v := range visible {
+		if v.Object.Type != typ {
+			continue
+		}
+		if colorOptional != nil {
+			c := v.Object.Color
+			// Object must have some color set (at least one channel > 0) to match a color request
+			if c[0] == 0 && c[1] == 0 && c[2] == 0 {
+				continue
+			}
+			const tol = 0.35
+			if math.Abs(float64(c[0]-colorOptional[0])) > tol ||
+				math.Abs(float64(c[1]-colorOptional[1])) > tol ||
+				math.Abs(float64(c[2]-colorOptional[2])) > tol {
+				continue
+			}
+		}
+		s.RecordDelete([]ObjectInstance{s.sceneData.Objects[v.Index]})
+		return s.DeleteObjectAtIndex(v.Index)
+	}
+	if colorOptional != nil {
+		return fmt.Errorf("no %s with that color in view (look at the object and try again)", typ)
+	}
+	return fmt.Errorf("no %s in view (look at the object and try again)", typ)
+}
+
+// visibleMatchFilters returns visible objects that match type (or any if typ empty), optional color, and optional name substring.
+func visibleMatchFilters(visible []VisibleObject, typ string, colorOptional *[3]float32, nameSubstring string) []VisibleObject {
+	primTypes := map[string]bool{"cube": true, "sphere": true, "cylinder": true, "plane": true}
+	if typ != "" && !primTypes[typ] {
+		return nil
+	}
+	nameLower := strings.ToLower(nameSubstring)
+	var out []VisibleObject
+	for _, v := range visible {
+		if typ != "" && v.Object.Type != typ {
+			continue
+		}
+		if colorOptional != nil {
+			c := v.Object.Color
+			if c[0] == 0 && c[1] == 0 && c[2] == 0 {
+				continue
+			}
+			const tol = 0.35
+			if math.Abs(float64(c[0]-colorOptional[0])) > tol ||
+				math.Abs(float64(c[1]-colorOptional[1])) > tol ||
+				math.Abs(float64(c[2]-colorOptional[2])) > tol {
+				continue
+			}
+		}
+		if nameLower != "" {
+			if !strings.Contains(strings.ToLower(v.Object.Name), nameLower) {
+				continue
+			}
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// visiblePickByPosition returns the one visible object at the given position: left (min X), right (max X),
+// top (min Y), bottom (max Y), closest (min distance), farthest (max distance). Empty string = closest.
+func visiblePickByPosition(visible []VisibleObject, position string) (VisibleObject, bool) {
+	if len(visible) == 0 {
+		return VisibleObject{}, false
+	}
+	pos := strings.ToLower(strings.TrimSpace(position))
+	if pos == "" {
+		pos = "closest"
+	}
+	best := visible[0]
+	switch pos {
+	case "left":
+		for _, v := range visible[1:] {
+			if v.ScreenPos.X < best.ScreenPos.X {
+				best = v
+			}
+		}
+	case "right":
+		for _, v := range visible[1:] {
+			if v.ScreenPos.X > best.ScreenPos.X {
+				best = v
+			}
+		}
+	case "top":
+		for _, v := range visible[1:] {
+			if v.ScreenPos.Y < best.ScreenPos.Y {
+				best = v
+			}
+		}
+	case "bottom":
+		for _, v := range visible[1:] {
+			if v.ScreenPos.Y > best.ScreenPos.Y {
+				best = v
+			}
+		}
+	case "closest":
+		for _, v := range visible[1:] {
+			if v.Distance < best.Distance {
+				best = v
+			}
+		}
+	case "farthest":
+		for _, v := range visible[1:] {
+			if v.Distance > best.Distance {
+				best = v
+			}
+		}
+	default:
+		return VisibleObject{}, false
+	}
+	return best, true
+}
+
+// DeleteVisibleByPosition deletes the one visible object at the given position (left, right, top, bottom, closest, farthest).
+func (s *Scene) DeleteVisibleByPosition(position string) error {
+	visible := s.ObjectsInView()
+	best, ok := visiblePickByPosition(visible, position)
+	if !ok {
+		return fmt.Errorf("no objects in view")
+	}
+	s.RecordDelete([]ObjectInstance{s.sceneData.Objects[best.Index]})
+	return s.DeleteObjectAtIndex(best.Index)
+}
+
+// DeleteVisibleByDescriptionAndPosition deletes the visible object matching type/color/name and at the given position.
+// typ can be "" for any type. nameSubstring "" = any name. position: left, right, top, bottom, closest, farthest, or "" for closest.
+func (s *Scene) DeleteVisibleByDescriptionAndPosition(typ string, colorOptional *[3]float32, nameSubstring string, position string) error {
+	visible := s.ObjectsInView()
+	filtered := visibleMatchFilters(visible, typ, colorOptional, nameSubstring)
+	best, ok := visiblePickByPosition(filtered, position)
+	if !ok {
+		if typ != "" && nameSubstring != "" {
+			return fmt.Errorf("no %q matching %q in view", typ, nameSubstring)
+		}
+		if typ != "" {
+			return fmt.Errorf("no %s in view", typ)
+		}
+		return fmt.Errorf("no matching object in view")
+	}
+	s.RecordDelete([]ObjectInstance{s.sceneData.Objects[best.Index]})
+	return s.DeleteObjectAtIndex(best.Index)
+}
+
+// DeleteAllVisibleByDescription deletes all visible objects matching type (or any if ""), optional color, and optional name substring.
+// Returns the number deleted. typ "" means any type; nameSubstring "" means any name.
+func (s *Scene) DeleteAllVisibleByDescription(typ string, colorOptional *[3]float32, nameSubstring string) (int, error) {
+	visible := s.ObjectsInView()
+	filtered := visibleMatchFilters(visible, typ, colorOptional, nameSubstring)
+	if len(filtered) == 0 {
+		if nameSubstring != "" {
+			return 0, fmt.Errorf("no objects matching %q in view", nameSubstring)
+		}
+		return 0, fmt.Errorf("no matching objects in view")
+	}
+	// Delete in reverse index order so indices remain valid
+	indices := make([]int, len(filtered))
+	for i, v := range filtered {
+		indices[i] = v.Index
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(indices)))
+	for _, idx := range indices {
+		s.RecordDelete([]ObjectInstance{s.sceneData.Objects[idx]})
+		_ = s.DeleteObjectAtIndex(idx)
+	}
+	return len(indices), nil
+}
+
+// ClearSelection clears any selected object in the scene.
+func (s *Scene) ClearSelection() {
+	s.selectedIndex = -1
+}
+
+// SelectVisibleByPosition selects the one visible object at the given position (left, right, top, bottom, closest, farthest).
+func (s *Scene) SelectVisibleByPosition(position string) error {
+	visible := s.ObjectsInView()
+	best, ok := visiblePickByPosition(visible, position)
+	if !ok {
+		return fmt.Errorf("no objects in view")
+	}
+	s.selectedIndex = best.Index
+	return nil
+}
+
+// SelectVisibleByDescriptionAndPosition selects the visible object matching type/color/name and at the given position.
+// typ can be "" for any type. nameSubstring "" = any name. position: left, right, top, bottom, closest, farthest, or "" for closest.
+func (s *Scene) SelectVisibleByDescriptionAndPosition(typ string, colorOptional *[3]float32, nameSubstring string, position string) error {
+	visible := s.ObjectsInView()
+	filtered := visibleMatchFilters(visible, typ, colorOptional, nameSubstring)
+	best, ok := visiblePickByPosition(filtered, position)
+	if !ok {
+		if typ != "" && nameSubstring != "" {
+			return fmt.Errorf("no %q matching %q in view", typ, nameSubstring)
+		}
+		if typ != "" {
+			return fmt.Errorf("no %s in view", typ)
+		}
+		if nameSubstring != "" {
+			return fmt.Errorf("no objects matching %q in view", nameSubstring)
+		}
+		return fmt.Errorf("no matching object in view")
+	}
+	s.selectedIndex = best.Index
+	return nil
+}
+
+// FocusOnVisibleByPosition points the camera target at the visible object at the given position
+// (left, right, top, bottom, closest, farthest) without changing the camera position.
+func (s *Scene) FocusOnVisibleByPosition(position string) error {
+	visible := s.ObjectsInView()
+	best, ok := visiblePickByPosition(visible, position)
+	if !ok {
+		return fmt.Errorf("no objects in view")
+	}
+	obj := s.sceneData.Objects[best.Index]
+	s.Camera.Target = rl.NewVector3(obj.Position[0], obj.Position[1], obj.Position[2])
+	return nil
+}
+
+// FocusOnVisibleByDescriptionAndPosition points the camera target at the visible object matching
+// type/color/name and at the given position. typ/nameSubstring semantics match SelectVisibleByDescriptionAndPosition.
+func (s *Scene) FocusOnVisibleByDescriptionAndPosition(typ string, colorOptional *[3]float32, nameSubstring string, position string) error {
+	visible := s.ObjectsInView()
+	filtered := visibleMatchFilters(visible, typ, colorOptional, nameSubstring)
+	best, ok := visiblePickByPosition(filtered, position)
+	if !ok {
+		if typ != "" && nameSubstring != "" {
+			return fmt.Errorf("no %q matching %q in view", typ, nameSubstring)
+		}
+		if typ != "" {
+			return fmt.Errorf("no %s in view", typ)
+		}
+		if nameSubstring != "" {
+			return fmt.Errorf("no objects matching %q in view", nameSubstring)
+		}
+		return fmt.Errorf("no matching object in view")
+	}
+	obj := s.sceneData.Objects[best.Index]
+	s.Camera.Target = rl.NewVector3(obj.Position[0], obj.Position[1], obj.Position[2])
+	return nil
+}
+
+// GetViewContextSummary returns a short text summary of what the camera currently sees, for the LLM.
+// Format: "Visible (left to right): 1. cube 'Tower' (left), 2. plane (center), 3. sphere (right)."
+func (s *Scene) GetViewContextSummary() string {
+	visible := s.ObjectsInView()
+	if len(visible) == 0 {
+		return "No objects in view."
+	}
+	// Sort by screen X for left-to-right order
+	byX := make([]VisibleObject, len(visible))
+	copy(byX, visible)
+	sort.Slice(byX, func(i, j int) bool { return byX[i].ScreenPos.X < byX[j].ScreenPos.X })
+	minX, maxX := byX[0].ScreenPos.X, byX[len(byX)-1].ScreenPos.X
+	midX := (minX + maxX) / 2
+	var parts []string
+	for i, v := range byX {
+		posLabel := "center"
+		if maxX > minX {
+			if v.ScreenPos.X < midX-20 {
+				posLabel = "left"
+			} else if v.ScreenPos.X > midX+20 {
+				posLabel = "right"
+			}
+		}
+		name := v.Object.Name
+		if name == "" {
+			name = v.Object.Type
+		} else {
+			name = fmt.Sprintf("%q (%s)", name, v.Object.Type)
+		}
+		parts = append(parts, fmt.Sprintf("%d. %s (%s)", i+1, name, posLabel))
+	}
+	return "Visible (left to right): " + strings.Join(parts, ", ") + "."
 }
 
 // EnsureTexture loads and caches a texture from path. Path is tried as-is and with textureBasePaths.
@@ -758,6 +1092,7 @@ func (s *Scene) Update() {
 	s.syncSceneToPhysics()
 	s.physicsWorld.Step(rl.GetFrameTime())
 	s.syncPhysicsToScene()
+	s.UpdateViewAwareness()
 }
 
 // objectAABB returns the world-space AABB for a scene object (primitives are centered at position).
@@ -782,6 +1117,104 @@ func objectAABBAt(obj ObjectInstance, pos [3]float32) rl.BoundingBox {
 		rl.NewVector3(pos[0]-half[0], pos[1]-half[1], pos[2]-half[2]),
 		rl.NewVector3(pos[0]+half[0], pos[1]+half[1], pos[2]+half[2]),
 	)
+}
+
+// ObjectsInView returns all scene objects currently visible to the camera:
+// in front of the camera and with their center projected inside the screen bounds.
+// Results are sorted by distance (closest first). Uses current camera and screen size.
+func (s *Scene) ObjectsInView() []VisibleObject {
+	objs := s.sceneData.Objects
+	if len(objs) == 0 {
+		return nil
+	}
+	camPos := s.Camera.Position
+	forward := rl.Vector3Subtract(s.Camera.Target, camPos)
+	forward = rl.Vector3Normalize(forward)
+	w := float32(rl.GetScreenWidth())
+	h := float32(rl.GetScreenHeight())
+	const inFrontEpsilon = 0.01
+
+	var out []VisibleObject
+	for i := range objs {
+		obj := objs[i]
+		drawPos := s.motionPosition(obj, i)
+		center := rl.NewVector3(drawPos[0], drawPos[1], drawPos[2])
+		toCenter := rl.Vector3Subtract(center, camPos)
+		dist := rl.Vector3Length(toCenter)
+		if dist < 1e-6 {
+			continue
+		}
+		dirToCenter := rl.Vector3Scale(toCenter, 1/dist)
+		if rl.Vector3DotProduct(dirToCenter, forward) < inFrontEpsilon {
+			continue // behind or to the side (outside view cone)
+		}
+		screen := rl.GetWorldToScreen(center, s.Camera)
+		if screen.X < 0 || screen.X > w || screen.Y < 0 || screen.Y > h {
+			continue
+		}
+		out = append(out, VisibleObject{
+			Index:        i,
+			Object:       obj,
+			Distance:     dist,
+			ScreenPos:    screen,
+			DrawPosition: drawPos,
+		})
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Distance < out[b].Distance })
+	return out
+}
+
+// EnableViewAwareness attaches a ViewAwareness to the scene. It will be updated each frame in Update.
+// Pass nil to disable. The caller can set OnEnterView, OnLeaveView, OnUpdate on the provided awareness.
+func (s *Scene) EnableViewAwareness(a *ViewAwareness) {
+	s.viewAwareness = a
+}
+
+// UpdateViewAwareness updates view-awareness state and invokes enter/leave/update callbacks.
+// Called automatically from Update when viewAwareness is set.
+func (s *Scene) UpdateViewAwareness() {
+	if s.viewAwareness == nil {
+		return
+	}
+	visible := s.ObjectsInView()
+	cur := make(map[int]struct{})
+	for _, v := range visible {
+		cur[v.Index] = struct{}{}
+	}
+	last := s.viewAwareness.lastVisible
+	// Enter: in cur but not in last
+	for idx := range cur {
+		if last == nil {
+			break
+		}
+		if _, was := last[idx]; was {
+			continue
+		}
+		for _, v := range visible {
+			if v.Index == idx {
+				if s.viewAwareness.OnEnterView != nil {
+					s.viewAwareness.OnEnterView(idx, v.Object, v.Distance)
+				}
+				break
+			}
+		}
+	}
+	// Leave: in last but not in cur
+	if last != nil {
+		for idx := range last {
+			if _, now := cur[idx]; now {
+				continue
+			}
+			objs := s.sceneData.Objects
+			if idx >= 0 && idx < len(objs) && s.viewAwareness.OnLeaveView != nil {
+				s.viewAwareness.OnLeaveView(idx, objs[idx])
+			}
+		}
+	}
+	s.viewAwareness.lastVisible = cur
+	if s.viewAwareness.OnUpdate != nil {
+		s.viewAwareness.OnUpdate(visible)
+	}
 }
 
 // rayPlaneY returns the intersection of ray with the horizontal plane Y = planeY.
