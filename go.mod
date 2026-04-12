@@ -4,7 +4,6 @@ go 1.25.6
 
 require (
 	github.com/gen2brain/raylib-go/raylib v0.55.1
-	github.com/tomicz/speak-to-agent v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -14,4 +13,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 )
 
-replace github.com/tomicz/speak-to-agent => ./modules/voice-to-text
