@@ -155,6 +155,13 @@ func RegisterSceneHandlers(a *Agent, scn *scene.Scene, reg *commands.Registry, p
 			}
 			strs = append(strs, s)
 		}
+		// Block commands that should not be changed by the LLM.
+		if len(strs) > 0 {
+			switch strs[0] {
+			case "model", "provider":
+				return fmt.Errorf("%s can only be changed manually (use cmd %s)", strs[0], strs[0])
+			}
+		}
 		if pendingRunCmd != nil {
 			pendingRunCmd <- strs
 			return nil
