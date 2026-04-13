@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"game-engine/internal/agent"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
@@ -10,6 +12,7 @@ import (
 	"game-engine/internal/scene"
 	"game-engine/internal/terminal"
 	"game-engine/internal/ui"
+	"os"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -27,9 +30,9 @@ type App struct {
 	Client    llm.Client
 
 	// Config state
-	CurrentAIModel string
-	CurrentFont    string
-	IsOllama       bool
+	CurrentProvider string // "ollama", "openai", "groq", or "" (auto)
+	CurrentAIModel  string
+	CurrentFont     string
 
 	// Async result channels
 	DownloadDone     chan *downloadResult
@@ -65,9 +68,68 @@ func (app *App) SaveEnginePrefs() {
 		ShowFPS:      app.Debug.ShowFPS,
 		ShowMemAlloc: app.Debug.ShowMemAlloc,
 		GridVisible:  app.Scene.GridVisible,
+		AIProvider:   app.CurrentProvider,
 		AIModel:      app.CurrentAIModel,
 		Font:         app.CurrentFont,
 	})
+}
+
+// DefaultModelForProvider returns a sensible default model for a given provider.
+func DefaultModelForProvider(provider string) string {
+	switch provider {
+	case "groq":
+		return "llama-3.3-70b-versatile"
+	case "openai":
+		return "gpt-4o-mini"
+	case "ollama":
+		return "qwen3-coder:30b"
+	default:
+		return "gpt-4o-mini"
+	}
+}
+
+// RebuildAgent recreates the LLM agent with the current client and wires it to the terminal.
+func (app *App) RebuildAgent() {
+	if app.Client == nil {
+		return
+	}
+	app.Agent = agent.New(app.Client, func() string { return app.CurrentAIModel })
+	agent.RegisterSceneHandlers(app.Agent, app.Scene, app.Registry, app.PendingRunCmd)
+	if app.Terminal != nil {
+		app.Terminal.GetViewContext = func() string { return app.Scene.GetViewContextSummary() }
+		app.Terminal.OnNaturalLanguage = func(line string, viewContext string) {
+			app.Log.Log("Thinking…")
+			summary, err := app.Agent.Run(context.Background(), line, viewContext)
+			if err != nil {
+				app.Log.Log(err.Error())
+			} else {
+				app.Log.Log(summary)
+			}
+		}
+	}
+}
+
+// BuildLLMClient creates an LLM client for the given provider using env vars for API keys.
+func BuildLLMClient(provider string) (llm.Client, error) {
+	switch provider {
+	case "openai":
+		key := os.Getenv("OPENAI_API_KEY")
+		if key == "" {
+			return nil, fmt.Errorf("OPENAI_API_KEY not set in .env")
+		}
+		return llm.NewOpenAICompat("openai", llm.OpenAIBaseURL, key, llm.AuthBearer), nil
+	case "groq":
+		key := os.Getenv("GROQ_API_KEY")
+		if key == "" {
+			return nil, fmt.Errorf("GROQ_API_KEY not set in .env")
+		}
+		return llm.NewOpenAICompat("groq", llm.GroqBaseURL, key, llm.AuthBearer), nil
+	case "ollama":
+		base := os.Getenv("OLLAMA_BASE_URL")
+		return llm.NewOllama(base), nil
+	default:
+		return nil, fmt.Errorf("unknown provider %q (use: ollama, openai, groq)", provider)
+	}
 }
 
 func (app *App) Update() {

@@ -15,6 +15,7 @@ type EnginePrefs struct {
 	ShowFPS      bool   `json:"show_fps"`
 	ShowMemAlloc bool   `json:"show_memalloc"`
 	GridVisible  bool   `json:"grid_visible"`
+	AIProvider   string `json:"ai_provider,omitempty"` // "ollama", "openai", "groq", or "" (auto-detect from env)
 	AIModel      string `json:"ai_model,omitempty"`
 	Font         string `json:"font,omitempty"` // path under assets/fonts/ (e.g. Roboto/static/Roboto-Regular.ttf)
 }

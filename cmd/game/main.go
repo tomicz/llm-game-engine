@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
-	"game-engine/internal/agent"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
 	"game-engine/internal/engineconfig"
 	"game-engine/internal/env"
 	"game-engine/internal/graphics"
-	"game-engine/internal/llm"
 	"game-engine/internal/logger"
 	"game-engine/internal/scene"
 	"game-engine/internal/terminal"
@@ -45,10 +42,17 @@ func main() {
 	dbg.SetShowMemAlloc(prefs.ShowMemAlloc)
 	scn.SetGridVisible(prefs.GridVisible)
 
-	currentAIModel := prefs.AIModel
-	if currentAIModel == "" {
-		currentAIModel = "gpt-4o-mini"
+	// Resolve provider: use persisted value, or auto-detect from env on first run.
+	provider := prefs.AIProvider
+	if provider == "" {
+		provider = detectProvider()
 	}
+
+	model := prefs.AIModel
+	if model == "" {
+		model = DefaultModelForProvider(provider)
+	}
+
 	currentFont := prefs.Font
 	if currentFont == "" {
 		currentFont = "Roboto/static/Roboto-Regular.ttf"
@@ -61,7 +65,8 @@ func main() {
 		Registry:         reg,
 		UI:               ui.New(),
 		Inspector:        ui.NewInspector(),
-		CurrentAIModel:   currentAIModel,
+		CurrentProvider:  provider,
+		CurrentAIModel:   model,
 		CurrentFont:      currentFont,
 		DownloadDone:     make(chan *downloadResult, 8),
 		SkyboxDone:       make(chan *skyboxResult, 4),
@@ -70,55 +75,19 @@ func main() {
 		baseNodes:        []*ui.Node{},
 	}
 
-	// If only Groq is configured, default to a Groq model.
-	if os.Getenv("GROQ_API_KEY") != "" && (app.CurrentAIModel == "" || app.CurrentAIModel == "gpt-4o-mini") {
-		app.CurrentAIModel = "llama-3.3-70b-versatile"
-		app.SaveEnginePrefs()
-	}
-
 	registerCommands(app)
 
-	// LLM client: Groq (free) > Cursor (+ OpenAI fallback) > OpenAI > Ollama (local).
-	groqKey := os.Getenv("GROQ_API_KEY")
-	cursorKey := os.Getenv("CURSOR_API_KEY")
-	openAIKey := os.Getenv("OPENAI_API_KEY")
-	ollamaBase := os.Getenv("OLLAMA_BASE_URL")
-	switch {
-	case groqKey != "":
-		app.Client = llm.NewGroq(groqKey)
-	case cursorKey != "" && openAIKey != "":
-		app.Client = &llm.Fallback{Primary: llm.NewCursor(cursorKey), Secondary: llm.NewOpenAI(openAIKey)}
-	case cursorKey != "":
-		app.Client = llm.NewCursor(cursorKey)
-	case openAIKey != "":
-		app.Client = llm.NewOpenAI(openAIKey)
-	default:
-		app.Client = llm.NewOllama(ollamaBase)
-		app.IsOllama = true
-		if app.CurrentAIModel == "" || app.CurrentAIModel == "gpt-4o-mini" || app.CurrentAIModel == "llama-3.3-70b-versatile" {
-			app.CurrentAIModel = "qwen3-coder:30b"
-			app.SaveEnginePrefs()
-		}
-	}
-
-	if app.Client != nil {
-		app.Agent = agent.New(app.Client, func() string { return app.CurrentAIModel })
-		agent.RegisterSceneHandlers(app.Agent, scn, reg, app.PendingRunCmd)
+	// Build LLM client from provider config.
+	client, err := BuildLLMClient(app.CurrentProvider)
+	if err != nil {
+		log.Log("LLM: " + err.Error())
+	} else {
+		app.Client = client
 	}
 
 	app.Terminal = terminal.New(log, reg)
-	if app.Agent != nil {
-		app.Terminal.GetViewContext = func() string { return scn.GetViewContextSummary() }
-		app.Terminal.OnNaturalLanguage = func(line string, viewContext string) {
-			log.Log("Thinking…")
-			summary, err := app.Agent.Run(context.Background(), line, viewContext)
-			if err != nil {
-				log.Log(err.Error())
-			} else {
-				log.Log(summary)
-			}
-		}
-	}
+	app.RebuildAgent()
+	app.SaveEnginePrefs()
 
 	// UI: CSS-driven overlay.
 	for _, path := range []string{"assets/ui/default.css", "../../assets/ui/default.css"} {
@@ -134,4 +103,16 @@ func main() {
 	}
 
 	graphics.Run(app.Update, app.Draw)
+}
+
+// detectProvider picks the best available provider based on env vars.
+func detectProvider() string {
+	switch {
+	case os.Getenv("GROQ_API_KEY") != "":
+		return "groq"
+	case os.Getenv("OPENAI_API_KEY") != "":
+		return "openai"
+	default:
+		return "ollama"
+	}
 }

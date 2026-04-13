@@ -93,6 +93,9 @@ func registerCommands(app *App) {
 		return scn.NewScene()
 	})
 
+	// provider: switch LLM provider at runtime
+	registerProviderCmd(app)
+
 	// model: set AI model for natural-language commands
 	registerModelCmd(app)
 
@@ -338,15 +341,37 @@ func registerSpawnCmd(app *App) {
 func registerModelCmd(app *App) {
 	modelFS := flag.NewFlagSet("model", flag.ContinueOnError)
 	app.Registry.Register("model", modelFS, func() error {
-		if app.IsOllama {
-			return fmt.Errorf("cannot change model when using Ollama (disabled to prevent LLM from switching by accident)")
-		}
 		args := modelFS.Args()
 		if len(args) < 1 {
-			return fmt.Errorf("usage: cmd model <name> (e.g. cmd model gpt-4o-mini)")
+			app.Log.Log(fmt.Sprintf("Current model: %s (provider: %s)", app.CurrentAIModel, app.CurrentProvider))
+			return nil
 		}
 		app.CurrentAIModel = args[0]
 		app.SaveEnginePrefs()
+		app.Log.Log("Model set: " + args[0])
+		return nil
+	})
+}
+
+func registerProviderCmd(app *App) {
+	providerFS := flag.NewFlagSet("provider", flag.ContinueOnError)
+	app.Registry.Register("provider", providerFS, func() error {
+		args := providerFS.Args()
+		if len(args) < 1 {
+			app.Log.Log(fmt.Sprintf("Current provider: %s (model: %s). Available: ollama, openai, groq", app.CurrentProvider, app.CurrentAIModel))
+			return nil
+		}
+		name := strings.ToLower(args[0])
+		client, err := BuildLLMClient(name)
+		if err != nil {
+			return err
+		}
+		app.Client = client
+		app.CurrentProvider = name
+		app.CurrentAIModel = DefaultModelForProvider(name)
+		app.RebuildAgent()
+		app.SaveEnginePrefs()
+		app.Log.Log(fmt.Sprintf("Switched to %s (model: %s)", name, app.CurrentAIModel))
 		return nil
 	})
 }
