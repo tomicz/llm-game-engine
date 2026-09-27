@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"slices"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -40,12 +41,6 @@ func (e *Engine) LoadCSS(path string) error {
 	return nil
 }
 
-// SetStylesheet sets the stylesheet directly (e.g. from embedded or merged CSS).
-func (e *Engine) SetStylesheet(sheet *Stylesheet) {
-	e.sheet = sheet
-	e.cacheValid = false
-}
-
 // LoadFont loads a TTF font from path for text rendering. If loading fails, the engine keeps using the default font.
 // Call after the window/OpenGL context exists (e.g. after first frame or in draw).
 func (e *Engine) LoadFont(path string) error {
@@ -65,15 +60,13 @@ func (e *Engine) Font() rl.Font {
 	return e.font
 }
 
-// AddNode appends a node. Nodes are drawn in order.
-func (e *Engine) AddNode(n *Node) {
-	e.nodes = append(e.nodes, n)
-	e.cacheValid = false
-}
-
-// SetNodes replaces all nodes.
+// SetNodes replaces all nodes. Styles are re-resolved only when the node list changes, so it is
+// cheap to call every frame with the same nodes.
 func (e *Engine) SetNodes(nodes []*Node) {
-	e.nodes = nodes
+	if slices.Equal(e.nodes, nodes) {
+		return
+	}
+	e.nodes = slices.Clone(nodes)
 	e.cacheValid = false
 }
 
@@ -118,98 +111,66 @@ func resolveBounds(n *Node, style ComputedStyle) {
 	n.Bounds.Y = float32(style.Top)
 }
 
-// Draw draws all nodes: for each node, resolve style (cached), update bounds from style, then draw background, border, and text.
-func (e *Engine) Draw() {
-	screenW := int32(rl.GetScreenWidth())
-	screenH := int32(rl.GetScreenHeight())
-	if !e.cacheValid {
-		e.cachedStyles = make([]ComputedStyle, len(e.nodes))
-		for i, n := range e.nodes {
-			props := e.resolveProps(n)
-			e.cachedStyles[i] = ResolveProps(props)
-			resolveBounds(n, e.cachedStyles[i])
-		}
-		e.cacheValid = true
+// resolve recomputes cached styles and bounds if the stylesheet or nodes changed.
+func (e *Engine) resolve() {
+	if e.cacheValid {
+		return
 	}
+	e.cachedStyles = make([]ComputedStyle, len(e.nodes))
+	for i, n := range e.nodes {
+		e.cachedStyles[i] = ResolveProps(e.resolveProps(n))
+		resolveBounds(n, e.cachedStyles[i])
+	}
+	e.cacheValid = true
+}
+
+// rect returns node i's on-screen rectangle, applying percentage positioning.
+func (e *Engine) rect(i int, screenW, screenH int32) (x, y, w, h int32) {
+	n, style := e.nodes[i], e.cachedStyles[i]
+	w, h = int32(n.Bounds.Width), int32(n.Bounds.Height)
+	x, y = int32(n.Bounds.X), int32(n.Bounds.Y)
+	if style.LeftPct >= 0 {
+		x = (screenW - w) * style.LeftPct / 100
+	}
+	if style.TopPct >= 0 {
+		y = (screenH - h) * style.TopPct / 100
+	}
+	return x, y, w, h
+}
+
+// Draw draws all nodes in order: background, 1px border, then text.
+func (e *Engine) Draw() {
+	e.resolve()
+	screenW, screenH := int32(rl.GetScreenWidth()), int32(rl.GetScreenHeight())
 	for i, n := range e.nodes {
 		style := e.cachedStyles[i]
-		w := int32(n.Bounds.Width)
-		h := int32(n.Bounds.Height)
-		x := int32(n.Bounds.X)
-		y := int32(n.Bounds.Y)
-		if style.LeftPct >= 0 {
-			x = (screenW - w) * style.LeftPct / 100
-		}
-		if style.TopPct >= 0 {
-			y = (screenH - h) * style.TopPct / 100
-		}
-
-		// Background
+		x, y, w, h := e.rect(i, screenW, screenH)
 		if style.Background.A > 0 {
 			rl.DrawRectangle(x, y, w, h, style.Background)
 		}
-		// Border (1px)
 		if style.HasBorder && w > 0 && h > 0 {
 			rl.DrawRectangleLines(x, y, w, h, style.Border)
 		}
-		// Text (for label-type or any node with text)
 		if n.Text != "" {
 			pad := style.Padding
 			if pad <= 0 {
 				pad = 4
 			}
-			textX := x + pad
-			textY := y + pad
-			if e.font.Texture.ID != 0 {
-				rl.DrawTextEx(e.font, n.Text, rl.NewVector2(float32(textX), float32(textY)), float32(defaultFontSize), 1, style.Color)
-			} else {
-				rl.DrawText(n.Text, textX, textY, defaultFontSize, style.Color)
-			}
+			DrawText(e.font, n.Text, x+pad, y+pad, defaultFontSize, style.Color)
 		}
 	}
 }
 
-// HitTest returns the topmost node that contains the given screen point (e.g. mouse position).
-// Uses the same layout as Draw; call after SetNodes (e.g. after a Draw) so layout is resolved.
-// Returns (nil, false) if no node contains the point.
+// HitTest returns the topmost node containing the screen point, using the layout of the last
+// SetNodes call.
 func (e *Engine) HitTest(screenX, screenY int32) (*Node, bool) {
-	screenW := int32(rl.GetScreenWidth())
-	screenH := int32(rl.GetScreenHeight())
-	if !e.cacheValid {
-		e.cachedStyles = make([]ComputedStyle, len(e.nodes))
-		for i, n := range e.nodes {
-			props := e.resolveProps(n)
-			e.cachedStyles[i] = ResolveProps(props)
-			resolveBounds(n, e.cachedStyles[i])
-		}
-		e.cacheValid = true
-	}
+	e.resolve()
+	screenW, screenH := int32(rl.GetScreenWidth()), int32(rl.GetScreenHeight())
 	for i := len(e.nodes) - 1; i >= 0; i-- {
-		n := e.nodes[i]
-		style := e.cachedStyles[i]
-		w := int32(n.Bounds.Width)
-		h := int32(n.Bounds.Height)
-		x := int32(n.Bounds.X)
-		y := int32(n.Bounds.Y)
-		if style.LeftPct >= 0 {
-			x = (screenW - w) * style.LeftPct / 100
-		}
-		if style.TopPct >= 0 {
-			y = (screenH - h) * style.TopPct / 100
-		}
+		x, y, w, h := e.rect(i, screenW, screenH)
 		if w > 0 && h > 0 && screenX >= x && screenX < x+w && screenY >= y && screenY < y+h {
-			return n, true
+			return e.nodes[i], true
 		}
 	}
 	return nil, false
-}
-
-// HasStylesheet returns whether a CSS file has been loaded.
-func (e *Engine) HasStylesheet() bool {
-	return e.sheet != nil && len(e.sheet.Rules) > 0
-}
-
-// Stylesheet returns the current stylesheet (may be nil).
-func (e *Engine) Stylesheet() *Stylesheet {
-	return e.sheet
 }

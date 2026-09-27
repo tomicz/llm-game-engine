@@ -17,10 +17,10 @@ type Node struct {
 // NewNode creates a node with type and optional class, id, and text.
 func NewNode(typ, class, id, text string) *Node {
 	return &Node{
-		Type:  typ,
-		Class: class,
-		ID:    id,
-		Text:  text,
+		Type:   typ,
+		Class:  class,
+		ID:     id,
+		Text:   text,
 		Bounds: rl.Rectangle{X: 0, Y: 0, Width: 0, Height: 0},
 	}
 }
