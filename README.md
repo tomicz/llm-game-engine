@@ -24,7 +24,9 @@ Or from `cmd/game`:
 cd cmd/game && go run .
 ```
 
-Assets (e.g. skybox, UI CSS) are loaded from `assets/`; see [assets/README.md](assets/README.md). Logs are written under `cmd/game/logs/` when run from `cmd/game`.
+Assets (e.g. skybox, UI CSS, scenes, fonts) are loaded from `assets/` in either case; see [assets/README.md](assets/README.md). Logs, config, and downloaded files are written relative to the working directory (e.g. `cmd/game/logs/` when run from `cmd/game`).
+
+In the game, press **ESC** to open the terminal and type `cmd help` to list every command.
 
 ---
 
@@ -32,7 +34,7 @@ Assets (e.g. skybox, UI CSS) are loaded from `assets/`; see [assets/README.md](a
 
 ### 3D scene and primitives
 
-- **Primitives:** `cube`, `sphere`, `cylinder`, `plane`. All use a common scale (e.g. 1×1×1 default); position is the **center** of each object.
+- **Primitives:** `cube`, `sphere`, `cylinder`, `plane`. All use a common scale (e.g. 1×1×1 default); position is the **center** of each object. All primitives share one lit shader.
 - **Scene file:** YAML (e.g. `assets/scenes/default.yaml`) defines the list of objects (type, position, scale). The scene loads at startup and can be saved at runtime; runtime-spawned objects are included.
 - **Physics:** Each object can have physics on (gravity, collision) or off (static). Set per object or globally via gravity command.
 
@@ -69,13 +71,13 @@ When the terminal is open (ESC), the scene is in **editor mode**:
 - **Delete:** `cmd delete selected` | `cmd delete look` | `cmd delete random` | `cmd delete name <name>` | **`cmd delete plane`** | **`cmd delete red cube`** | **`cmd delete left`** / **`cmd delete right`** (position in view) | **`cmd delete cube right`** (type + position) | **`cmd delete all`** / **`cmd delete all cube`** / **`cmd delete all building`** (bulk by type or name). Camera must be looking at the relevant object(s); no selection needed for view-based delete.
 - **Select by view:** `cmd select none` | `cmd select left` / `right` / `top` / `bottom` / `closest` / `farthest` | `cmd select cube` | `cmd select building` | `cmd select red cube` | `cmd select building right`. Chooses the matching visible object as the current selection (then use color, name, duplicate, etc.).
 - **Inspect:** `cmd inspect` prints type, name, position, scale, color, physics, motion, and texture for the selected object (or the closest object in view if none selected).
-- **Duplicate:** `cmd duplicate [N]` clones the selected object N times (default 1). Select first.
-- **Undo:** `cmd undo` reverts the last add or delete (one level).
+- **Duplicate:** `cmd duplicate [N]` clones the selected object N times (default 1, max 20). Select first.
+- **Undo:** `cmd undo` reverts the last add or delete (one level). A whole natural-language request, `delete all`, `template`, or `duplicate` is undone in one step.
 
 ### Object properties (select first)
 
 - **Color:** `cmd color <r> <g> <b>` (0–1, e.g. `cmd color 1 0 0` for red).
-- **Name:** `cmd name <name>` (for reference and `delete name <name>`).
+- **Name:** `cmd name <name>` (for reference and `delete name <name>`; names may contain spaces).
 - **Motion:** `cmd motion bob` (gentle Y oscillation) or `cmd motion off`.
 - **Physics:** `cmd physics on` / `cmd physics off` (gravity/collision on selected object).
 
@@ -92,7 +94,16 @@ When the terminal is open (ESC), the scene is in **editor mode**:
 
 ### Physics
 
-- **Gravity:** `cmd gravity <y>` (e.g. `cmd gravity -9.8` or `cmd gravity 0` for zero-g). Affects all dynamic objects.
+- **Gravity:** `cmd gravity <y>` (e.g. `cmd gravity -9.8` or `cmd gravity 0` for zero-g). Affects all dynamic objects. See [docs/physics.md](docs/physics.md).
+
+### Terrain
+
+- **Heightmap:** `cmd heightmap` generates a static procedural terrain mesh centered on the origin (replacing any existing terrain). Options: `--w` / `--d` (size in tiles), `--tile` (tile size), `--h` (max height), `--seed` (0 = random), e.g. `cmd heightmap --w 64 --d 64 --h 5`.
+- **Texture tiling:** select the terrain, apply a texture (`cmd texture …` or `cmd download image …`), then `cmd terrain_repeat <u> <v>` (e.g. `cmd terrain_repeat 8 8`).
+
+### Font
+
+- **UI font:** `cmd font <name>` (e.g. `cmd font Inter`, `cmd font Open Sans`) uses a font from `assets/fonts/` or downloads it from Google Fonts. `cmd font` shows the current one. See [assets/fonts/README.md](assets/fonts/README.md).
 
 ### Presets (templates)
 
@@ -100,13 +111,13 @@ When the terminal is open (ESC), the scene is in **editor mode**:
 
 ### Natural language (LLM agent)
 
-When you type a line **without** `cmd `, it is sent to an LLM (if an API key is configured). The model returns **structured actions**; the engine applies them. No code generation—the running process uses the LLM to decide what to do, then uses existing handlers.
+When you type a line **without** `cmd `, it is sent to an LLM (if a provider is available). The model returns **structured actions**; the engine applies them. No code generation—the running process uses the LLM to decide what to do, then uses existing handlers. The request runs in the background, so the game keeps running while the model thinks; the resulting actions are applied together and undo as one step.
 
 **Agent actions:**
 
 - **add_object** — One primitive: type (cube/sphere/cylinder/plane), position, scale, optional color, physics on/off.
 - **add_objects** — Many primitives: type, count, pattern (grid/line/random), spacing, origin, optional scale_min/scale_max, color, color_random, physics. Use for “spawn 50 cubes”, “city with random heights”, “colorful buildings”, etc.
-- **run_cmd** — Run any in-game command by args (e.g. `["grid","--hide"]`, `["lighting","sunset"]`, `["screenshot"]`).
+- **run_cmd** — Run any in-game command by args (e.g. `["grid","--hide"]`, `["lighting","sunset"]`, `["screenshot"]`). The command list the model sees is generated from the engine's command registry, so it always matches `cmd help`. `model`, `provider`, and `help` are user-only.
 
 **Examples the LLM can handle:**
 
@@ -114,44 +125,58 @@ When you type a line **without** `cmd `, it is sent to an LLM (if an API key is 
 - “Create a city”, “city with skyscrapers”, “buildings with random heights” → add_objects with cubes, scale_min/scale_max for height, physics false.
 - “Colorful city”, “buildings in random colors” → same + color_random.
 - “Forest”, “spawn trees” → LLM composes trees from cylinders (trunk) + spheres (foliage), physics false, multiple add_object actions.
-- “Save the scene”, “hide grid”, “sunset lighting”, “zero gravity”, “take a screenshot”, “delete selected”, “undo”, “focus on selected”, “set model to gpt-4o-mini”, etc. → run_cmd with the right args.
+- “Save the scene”, “hide grid”, “sunset lighting”, “zero gravity”, “take a screenshot”, “delete selected”, “undo”, “focus on selected”, “select the red cube on the left”, etc. → run_cmd with the right args.
 
-**Available shapes** for the LLM are only **cube, sphere, cylinder, plane**. The LLM composes them to represent other things (e.g. tree = cylinder + sphere). Model choice is set with `cmd model <name>` and persisted.
+**Available shapes** for the LLM are only **cube, sphere, cylinder, plane**. The LLM composes them to represent other things (e.g. tree = cylinder + sphere). Provider and model are set with `cmd provider <name>` and `cmd model <name>` and persisted.
 
 ### UI (CSS overlay)
 
-- **Primitive CSS UI:** A minimal CSS-driven layer (see [docs/UI.md](docs/UI.md)). Styles live in `assets/ui/` (e.g. `default.css`). Selectors: `.class`, `#id`. Properties: background, color, border, width, height, left/top (pixels or %). Nodes are created in code; draw order is Scene → Debug → UI → Terminal (terminal on top when enabled).
-- **Inspector:** Scene UI can show an inspector for the selected object; layout and content are driven by the same UI system.
+- **Primitive CSS UI:** A minimal CSS-driven layer (see [docs/ui.md](docs/ui.md)). Styles live in `assets/ui/` (e.g. `default.css`). Selectors: `.class`, `#id`. Properties: background, color, border, width, height, left/top (pixels or %), padding. Nodes are created in code; draw order is Scene → Debug → UI → Terminal (terminal on top when enabled).
+- **Inspector:** With the terminal open, the selected object's type, position, scale, physics, and texture are shown in an inspector panel styled by the same UI system. Click the **Physics** row to toggle physics.
 
 ### Config and logs
 
-- **Engine config:** `config/engine.json` (relative to working directory) stores grid visibility, FPS/memalloc toggles, and AI model name. Loaded at startup; saved when you change those options.
-- **Logs:** `cmd/game/logs/terminal.txt` (terminal input lines); `cmd/game/logs/engine_log.txt` (engine/raylib output and errors). Not cleared on start.
+- **Engine config:** `config/engine.json` (relative to working directory) stores grid visibility, FPS/memalloc toggles, AI provider and model, and the UI font. Loaded at startup (missing keys keep their defaults); saved when you change those options.
+- **Logs:** `logs/terminal.txt` (terminal lines); `logs/engine_log.txt` (engine/raylib output, errors, and crash output). Relative to the working directory, e.g. `cmd/game/logs/`. Not cleared on start.
 
 ---
 
 ## LLM setup (how the engine “builds itself”)
 
-The engine turns **natural-language** input into game actions by calling an LLM (Groq, OpenAI, Cursor, or Ollama). To enable this:
+The engine turns **natural-language** input into game actions by calling an LLM: **Groq**, **OpenAI**, or a local **Ollama**. To enable this:
 
 1. Copy `.env.example` to `.env`: `cp .env.example .env`
-2. Add your API key(s) to `.env`, e.g. `GROQ_API_KEY=...` or `OPENAI_API_KEY=...`
+2. Add your API key(s) to `.env`, e.g. `GROQ_API_KEY=...` or `OPENAI_API_KEY=...` — or run [Ollama](https://ollama.com/) locally (no key; set `OLLAMA_BASE_URL` if it isn't on `http://localhost:11434`).
 3. **Do not commit `.env`** — it’s in `.gitignore`. Never put API keys in the repo.
 
-**Provider priority:** Groq (free tier) → Cursor → OpenAI. Set the model in-game with `cmd model <name>` (e.g. `cmd model gpt-4o-mini` or `cmd model llama-3.3-70b-versatile`). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Natural language and AI agent).
+**First run:** the provider is picked from your keys: Groq (free tier) → OpenAI → Ollama. After that, switch in-game with `cmd provider groq|openai|ollama` and set the model with `cmd model <name>` (defaults: `llama-3.3-70b-versatile`, `gpt-4o-mini`, `qwen3-coder:30b`). Both are saved in `config/engine.json`. See [docs/architecture.md](docs/architecture.md) (Natural language and AI agent).
 
 ---
 
 ## Project layout
 
-- **`cmd/game/`** — Entry point; wires logger, terminal, scene, graphics, agent, and commands.
-- **`internal/`** — Engine packages: `graphics`, `scene`, `primitives`, `terminal`, `commands`, `agent`, `llm`, `debug`, `engineconfig`, `logger`, `ui`, `env`.
+- **`cmd/game/`** — The application: `main.go` plus the `App` that wires subsystems together, the terminal commands (`commands*.go`, `download.go`), and AI setup (`ai.go`).
+- **`internal/`** — Engine packages: `graphics`, `scene`, `primitives`, `physics`, `mapgen`, `terminal`, `commands`, `agent`, `llm`, `assets`, `ui`, `debug`, `engineconfig`, `logger`, `download`, `fonts`, `googlefonts`, `env`.
+- **`internal/scene/`** — The 3D world, split by concern: objects and IDs, undo, persistence, queries, editor, rendering, skybox, terrain.
 - **`internal/agent/`** — Natural language → LLM → structured actions (`add_object`, `add_objects`, `run_cmd`); dispatches to the same handlers used by `cmd` commands.
-- **`internal/llm/`** — LLM client (Groq, OpenAI, Cursor, Ollama).
-- **`assets/`** — Optional runtime assets: skybox under `assets/skybox/`, UI under `assets/ui/`, primitives/scenes under `assets/primitives/`, `assets/scenes/`.
-- **`docs/`** — [ARCHITECTURE.md](docs/ARCHITECTURE.md), [UI.md](docs/UI.md), and other docs.
+- **`internal/llm/`** — LLM clients (OpenAI-compatible for Groq/OpenAI, and Ollama).
+- **`assets/`** — Optional runtime assets: skybox under `assets/skybox/`, UI under `assets/ui/`, scenes under `assets/scenes/`, fonts under `assets/fonts/`.
+- **`docs/`** — [architecture.md](docs/architecture.md), [physics.md](docs/physics.md), [ui.md](docs/ui.md).
 
-Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Details: [docs/architecture.md](docs/architecture.md).
+
+---
+
+## Development
+
+Tests run without opening a window:
+
+```bash
+go test -race ./...
+go vet ./...
+```
+
+Rendering (shaders, textures, skybox) isn't covered by tests; check it by running the game.
 
 ---
 
@@ -160,7 +185,8 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Optional assets live under **`assets/`**, grouped by purpose.
 
 - **Skybox:** Put `skybox.png` or `skybox.jpg` in `assets/skybox/`. Equirectangular (2:1) or cubemap layouts supported. Or set at runtime with `cmd skybox <url>`.
-- **UI:** CSS and related assets in `assets/ui/` (e.g. `default.css`). See [docs/UI.md](docs/UI.md).
-- **Scenes:** YAML in `assets/scenes/` (e.g. `default.yaml`). Primitives’ default definitions in `assets/primitives/`.
+- **UI:** CSS and related assets in `assets/ui/` (e.g. `default.css`). See [docs/ui.md](docs/ui.md).
+- **Scenes:** YAML in `assets/scenes/` (e.g. `default.yaml`).
+- **Fonts:** TTF/OTF under `assets/fonts/`; see [assets/fonts/README.md](assets/fonts/README.md).
 
 Full list and sources (e.g. Poly Haven, CC0): [assets/README.md](assets/README.md).
