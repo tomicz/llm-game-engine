@@ -168,9 +168,13 @@ func (r *Registry) draw(name string, position, scale [3]float32, tint *[4]float3
 		rl.SetMaterialTexture(&m.mtl, rl.MapAlbedo, *tex)
 		m.setUVScale(uv)
 	}
-	// DrawMesh uploads the albedo color as the shader's colDiffuse uniform.
+	// DrawMesh uploads the albedo color as the shader's colDiffuse uniform. Untinted textures are
+	// drawn as-is (white); untinted plain shapes use the default gray.
 	if albedo := m.mtl.GetMap(rl.MapAlbedo); albedo != nil {
 		albedo.Color = tintToColor(tint)
+		if tex != nil && tint == nil {
+			albedo.Color = rl.White
+		}
 	}
 	rl.DrawMesh(mesh, m.mtl, modelMatrix(position, scale, shapeDefs[name].centerOffset))
 }
