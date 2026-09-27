@@ -261,3 +261,18 @@ func TestFindByNameAndLabel(t *testing.T) {
 		t.Errorf("Labels = %q, %q", named.Label(), unnamed.Label())
 	}
 }
+
+func TestTerrainMeshAlignsWithItsBox(t *testing.T) {
+	size := [3]float32{32, 3, 24}
+	o := &Object{Type: "terrain", Position: [3]float32{0, size[1] / 2, 0}, Scale: size}
+	// raylib's heightmap mesh spans 0..size, so drawing it at the box's minimum corner covers the box.
+	origin := terrainOrigin(o, o.Position)
+	box := o.bounds()
+	if origin != [3]float32{box.Min.X, box.Min.Y, box.Min.Z} {
+		t.Errorf("terrain drawn at %v, box min is %v", origin, box.Min)
+	}
+	if origin != [3]float32{-16, 0, -12} {
+		t.Errorf("terrain origin = %v, want [-16 0 -12] (centered in XZ, base at Y=0)", origin)
+	}
+}
+

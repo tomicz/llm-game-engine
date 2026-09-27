@@ -45,9 +45,7 @@ func (s *Scene) Draw(editorMode bool) {
 	for _, o := range s.objects {
 		drawPos := o.drawPosition(now)
 		if o.Type == primitives.Terrain {
-			// The terrain mesh is built in world space around the origin; its object only carries
-			// color, texture, and the selectable box.
-			s.drawPrimitive(o, primitives.Terrain, [3]float32{}, [3]float32{1, 1, 1})
+			s.drawPrimitive(o, primitives.Terrain, terrainOrigin(o, drawPos), [3]float32{1, 1, 1})
 		} else {
 			s.drawPrimitive(o, o.Type, drawPos, o.Scale)
 		}
@@ -68,6 +66,14 @@ func (s *Scene) drawPrimitive(o *Object, shape string, pos, scale [3]float32) {
 		return
 	}
 	s.prims.Draw(shape, pos, scale, o.tint())
+}
+
+// terrainOrigin is where the terrain mesh is drawn: raylib's heightmap mesh spans 0..size on each
+// axis, so it is placed at the minimum corner of the terrain object's box to line up with the
+// object's collider and selection box.
+func terrainOrigin(o *Object, center [3]float32) [3]float32 {
+	s := o.size()
+	return [3]float32{center[0] - s[0]/2, center[1] - s[1]/2, center[2] - s[2]/2}
 }
 
 // texture returns the GPU texture for an object's texture path, loading and caching it on first

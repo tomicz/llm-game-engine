@@ -76,8 +76,9 @@ func (opts HeightMapOptions) withDefaults() HeightMapOptions {
 	return opts
 }
 
-// GenerateTerrain builds a single heightmapped mesh from fractal noise, centered on the origin in XZ
-// with its base at Y=0. It returns the mesh and its world size (width, max height, depth).
+// GenerateTerrain builds a single heightmapped mesh from fractal noise. Like raylib's
+// GenMeshHeightmap, the mesh spans 0..size on each axis. It returns the mesh and its world size
+// (width, max height, depth).
 // Must be called on the main thread after the window exists (it uploads the mesh to the GPU).
 func GenerateTerrain(opts HeightMapOptions) (mesh rl.Mesh, size [3]float32, err error) {
 	opts = opts.withDefaults()
