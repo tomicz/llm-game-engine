@@ -22,23 +22,19 @@ func ParseCSS(content string) (*Stylesheet, error) {
 
 func stripCSSComments(s string) string {
 	var b strings.Builder
-	i := 0
-	for i < len(s) {
-		if i+1 < len(s) && s[i] == '/' && s[i+1] == '*' {
-			j := i + 2
-			for j+1 < len(s) && !(s[j] == '*' && s[j+1] == '/') {
-				j++
-			}
-			if j+1 < len(s) {
-				j += 2
-			}
-			i = j
-			continue
+	for {
+		start := strings.Index(s, "/*")
+		if start < 0 {
+			b.WriteString(s)
+			return b.String()
 		}
-		b.WriteByte(s[i])
-		i++
+		b.WriteString(s[:start])
+		end := strings.Index(s[start+2:], "*/")
+		if end < 0 {
+			return b.String() // unterminated comment runs to end of input
+		}
+		s = s[start+2+end+2:]
 	}
-	return b.String()
 }
 
 // parseOneRule finds the next "selector { ... }" and returns the rule and the rest of the string.

@@ -3,6 +3,7 @@ package download
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,24 +67,12 @@ func Download(url string, destDir string) (savedPath string, err error) {
 }
 
 func filenameFromContentDisposition(cd string) string {
-	cd = strings.TrimSpace(cd)
-	// filename="..."; or filename*=UTF-8''...
-	if i := strings.Index(cd, "filename*=UTF-8''"); i >= 0 {
-		s := cd[i+len("filename*=UTF-8''"):]
-		if j := strings.IndexAny(s, ";\r\n"); j >= 0 {
-			s = s[:j]
-		}
-		return strings.Trim(s, "\"")
+	_, params, err := mime.ParseMediaType(cd)
+	if err != nil {
+		return ""
 	}
-	if i := strings.Index(cd, "filename="); i >= 0 {
-		s := cd[i+len("filename="):]
-		s = strings.Trim(s, "\" ")
-		if j := strings.IndexAny(s, ";\r\n"); j >= 0 {
-			s = s[:j]
-		}
-		return s
-	}
-	return ""
+	// ParseMediaType decodes RFC 5987 filename*= into "filename".
+	return params["filename"]
 }
 
 func extensionFromContentType(ct string) string {
@@ -94,10 +83,10 @@ func extensionFromContentType(ct string) string {
 	switch {
 	case strings.Contains(ct, "zip"):
 		return ".zip"
-	case strings.Contains(ct, "font") || strings.Contains(ct, "ttf"):
-		return ".ttf"
 	case strings.Contains(ct, "otf"):
 		return ".otf"
+	case strings.Contains(ct, "font") || strings.Contains(ct, "ttf"):
+		return ".ttf"
 	case strings.Contains(ct, "png"):
 		return ".png"
 	case strings.Contains(ct, "jpeg"), strings.Contains(ct, "jpg"):
