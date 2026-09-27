@@ -76,6 +76,18 @@ func terrainOrigin(o *Object, center [3]float32) [3]float32 {
 	return [3]float32{center[0] - s[0]/2, center[1] - s[1]/2, center[2] - s[2]/2}
 }
 
+// SetTexture sets o's texture path. The image is (re)loaded from disk on the next draw, so a file
+// that was missing earlier, or has since been replaced (e.g. re-downloaded), is picked up.
+func (s *Scene) SetTexture(o *Object, path string) {
+	if tex, ok := s.textures[path]; ok {
+		if rl.IsTextureValid(tex) {
+			rl.UnloadTexture(tex)
+		}
+		delete(s.textures, path)
+	}
+	o.Texture = path
+}
+
 // texture returns the GPU texture for an object's texture path, loading and caching it on first
 // use. The path is tried as given and under assets/textures/.
 func (s *Scene) texture(path string) (rl.Texture2D, bool) {
@@ -89,7 +101,7 @@ func (s *Scene) texture(path string) (rl.Texture2D, bool) {
 	if file, ok := assets.Find(path, "assets/textures/"+path); ok {
 		tex = rl.LoadTexture(file)
 	}
-	// Cache failures too, so a missing file isn't retried every frame.
+	// Cache failures too, so a missing file isn't retried every frame; SetTexture clears the entry.
 	s.textures[path] = tex
 	return tex, rl.IsTextureValid(tex)
 }

@@ -49,7 +49,7 @@ func (a *App) registerAssetCommands() {
 				a.log.Log("Image saved to " + path + ", but its object was deleted.")
 				return
 			}
-			o.Texture = path
+			scn.SetTexture(o, path)
 			a.log.Log("Texture applied: " + path)
 		})
 		return nil
@@ -63,7 +63,7 @@ func (a *App) registerAssetCommands() {
 			if len(args) != 1 {
 				return errors.New("usage: cmd texture <path>")
 			}
-			o.Texture = args[0]
+			scn.SetTexture(o, args[0])
 			return nil
 		}),
 	})

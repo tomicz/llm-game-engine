@@ -276,3 +276,17 @@ func TestTerrainMeshAlignsWithItsBox(t *testing.T) {
 	}
 }
 
+func TestSetTextureDropsCachedEntry(t *testing.T) {
+	s := newTestScene(t)
+	id := s.Add(Object{Type: "cube"})[0]
+	o, _ := s.Object(id)
+	// Simulate an earlier failed load of the path.
+	s.textures["assets/textures/downloaded/foo.png"] = rl.Texture2D{}
+	s.SetTexture(o, "assets/textures/downloaded/foo.png")
+	if o.Texture != "assets/textures/downloaded/foo.png" {
+		t.Errorf("Texture = %q", o.Texture)
+	}
+	if _, cached := s.textures["assets/textures/downloaded/foo.png"]; cached {
+		t.Error("stale cache entry kept; the file would never be retried")
+	}
+}
