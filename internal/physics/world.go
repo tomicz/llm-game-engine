@@ -1,6 +1,8 @@
 package physics
 
 import (
+	"math"
+
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -70,85 +72,74 @@ func penetrationAxis(a, b rl.BoundingBox) (depth float32, axis int) {
 	return depth, axis
 }
 
-// Step advances the simulation by dt seconds: apply gravity, integrate, then AABB collisions.
+// Timestep limits for Advance. Frame times are split into sub-steps of at most maxStep seconds so
+// fast bodies don't tunnel through thin colliders, and capped at maxFrameTime so a long stall
+// (e.g. the window being dragged) doesn't launch everything at once.
+const (
+	maxStep      = float32(1.0 / 60)
+	maxFrameTime = float32(0.25)
+)
+
+// Advance simulates dt seconds of frame time in one or more Steps of at most maxStep.
+func (w *World) Advance(dt float32) {
+	dt = min(dt, maxFrameTime)
+	if dt <= 0 {
+		return
+	}
+	n := int(math.Ceil(float64(dt / maxStep)))
+	for range n {
+		w.Step(dt / float32(n))
+	}
+}
+
+// Step advances the simulation by dt seconds: apply gravity, integrate, then resolve AABB overlaps.
 // No global floor: dynamic bodies can fall below Y=0 until they hit another body (e.g. a static plane).
 func (w *World) Step(dt float32) {
-	// Apply gravity and integrate for dynamic bodies
 	for _, b := range w.Bodies {
 		if b.Static {
 			continue
 		}
-		b.Velocity[0] += w.Gravity[0] * dt
-		b.Velocity[1] += w.Gravity[1] * dt
-		b.Velocity[2] += w.Gravity[2] * dt
-		b.Position[0] += b.Velocity[0] * dt
-		b.Position[1] += b.Velocity[1] * dt
-		b.Position[2] += b.Velocity[2] * dt
+		for i := range 3 {
+			b.Velocity[i] += w.Gravity[i] * dt
+			b.Position[i] += b.Velocity[i] * dt
+		}
 	}
 
-	// AABB collision: resolve overlapping pairs (push apart along minimum penetration axis)
-	for i := 0; i < len(w.Bodies); i++ {
-		bi := w.Bodies[i]
+	// Resolve overlapping pairs by pushing them apart along the axis of least penetration.
+	for i, bi := range w.Bodies {
 		boxI := bodyAABB(bi)
-		for j := i + 1; j < len(w.Bodies); j++ {
-			bj := w.Bodies[j]
-			if !rl.CheckCollisionBoxes(boxI, bodyAABB(bj)) {
+		for _, bj := range w.Bodies[i+1:] {
+			if bi.Static && bj.Static {
 				continue
 			}
-			boxJ := bodyAABB(bj)
-			depth, axis := penetrationAxis(boxI, boxJ)
+			depth, axis := penetrationAxis(boxI, bodyAABB(bj))
 			if axis < 0 {
 				continue
 			}
-			// Push apart: move along axis. Static doesn't move.
-			totalMass := bi.Mass + bj.Mass
-			if bi.Static {
-				totalMass = bj.Mass
+			// Push each body away from the other's center; on a tie, bj goes toward +axis.
+			dir := float32(1)
+			if bj.Position[axis] < bi.Position[axis] {
+				dir = -1
 			}
-			if bj.Static {
-				totalMass = bi.Mass
+			var shareI, shareJ float32 // fraction of depth each body moves
+			switch {
+			case bi.Static:
+				shareJ = 1
+			case bj.Static:
+				shareI = 1
+			default:
+				total := bi.Mass + bj.Mass
+				shareI, shareJ = bj.Mass/total, bi.Mass/total
 			}
-			var moveI, moveJ float32
-			if bi.Static {
-				moveI = 0
-				moveJ = depth
-			} else if bj.Static {
-				moveI = -depth
-				moveJ = 0
-			} else {
-				moveI = -depth * (bj.Mass / totalMass)
-				moveJ = depth * (bi.Mass / totalMass)
+			bi.Position[axis] -= dir * depth * shareI
+			bj.Position[axis] += dir * depth * shareJ
+			if !bi.Static {
+				bi.Velocity[axis] = 0
 			}
-			switch axis {
-			case 0:
-				bi.Position[0] += moveI
-				bj.Position[0] += moveJ
-				if !bi.Static {
-					bi.Velocity[0] = 0
-				}
-				if !bj.Static {
-					bj.Velocity[0] = 0
-				}
-			case 1:
-				bi.Position[1] += moveI
-				bj.Position[1] += moveJ
-				if !bi.Static {
-					bi.Velocity[1] = 0
-				}
-				if !bj.Static {
-					bj.Velocity[1] = 0
-				}
-			case 2:
-				bi.Position[2] += moveI
-				bj.Position[2] += moveJ
-				if !bi.Static {
-					bi.Velocity[2] = 0
-				}
-				if !bj.Static {
-					bj.Velocity[2] = 0
-				}
+			if !bj.Static {
+				bj.Velocity[axis] = 0
 			}
-			boxI = bodyAABB(bi) // update for next pair
+			boxI = bodyAABB(bi) // bi may have moved; use its new box for the remaining pairs
 		}
 	}
 }
