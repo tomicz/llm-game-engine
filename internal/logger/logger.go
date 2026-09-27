@@ -1,3 +1,4 @@
+// Package logger keeps the in-game terminal log and the engine log files.
 package logger
 
 import (
@@ -9,103 +10,79 @@ import (
 )
 
 const (
-	// LogFilePath is the terminal/chat log file (user input only). Not cleared on start.
+	// LogFilePath is the terminal/chat log (every terminal line). Appended to, never cleared.
 	LogFilePath = "logs/terminal.txt"
-	// EngineLogFilePath is the engine log file (raylib INFO/WARNING/ERROR and engine errors). Persists after exit.
+	// EngineLogFilePath is the engine log (raylib trace output, engine errors, and stderr,
+	// including crash dumps). Appended to, never cleared.
 	EngineLogFilePath = "logs/engine_log.txt"
-	// maxLines caps in-memory terminal lines to avoid unbounded growth.
+	// maxLines caps in-memory terminal lines.
 	maxLines = 1000
+	stamp    = "2006-01-02 15:04:05"
 )
 
-// Logger stores terminal lines in memory (capped) and writes terminal logs to terminal.txt.
-// Engine/raylib output is appended to engine_log.txt and persists across game runs.
+// Logger stores terminal lines in memory and in terminal.txt, and writes engine output to
+// engine_log.txt. It is safe for concurrent use.
 type Logger struct {
-	mu         sync.Mutex
-	lines      []string
-	engineLog  *os.File
+	mu        sync.Mutex
+	lines     []string
+	termLog   *os.File
+	engineLog *os.File
 }
 
-// New returns a new Logger and ensures the logs directory exists. Engine log is not cleared; output persists.
-// Tees stderr to the engine log file so runtime crash dumps (e.g. SIGSEGV) are also written there.
+// New opens the log files under logs/ (created if needed) and tees stderr into the engine log so
+// runtime crash dumps are captured too. Logging still works in memory if the files can't be opened.
 func New() *Logger {
-	dir := filepath.Dir(LogFilePath)
-	_ = os.MkdirAll(dir, 0755)
-	teeStderrToEngineLog(dir)
-	engineLogPath := filepath.Join(dir, filepath.Base(EngineLogFilePath))
-	f, _ := os.OpenFile(engineLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	return &Logger{lines: make([]string, 0), engineLog: f}
+	_ = os.MkdirAll(filepath.Dir(LogFilePath), 0o755)
+	l := &Logger{}
+	l.termLog, _ = os.OpenFile(LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	l.engineLog, _ = os.OpenFile(EngineLogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if l.engineLog != nil {
+		teeStderr(l.engineLog)
+	}
+	return l
 }
 
-// teeStderrToEngineLog redirects stderr through a pipe; a goroutine copies to both original stderr and engine_log.txt.
-func teeStderrToEngineLog(logsDir string) {
-	engineLogPath := filepath.Join(logsDir, "engine_log.txt")
-	f, err := os.OpenFile(engineLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// teeStderr redirects os.Stderr through a pipe whose contents go to both the original stderr and w.
+func teeStderr(w io.Writer) {
+	original := os.Stderr
+	r, pw, err := os.Pipe()
 	if err != nil {
 		return
 	}
-	originalStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		f.Close()
-		return
-	}
-	os.Stderr = w
+	os.Stderr = pw
 	go func() {
-		_, _ = io.Copy(io.MultiWriter(originalStderr, f), r)
+		_, _ = io.Copy(io.MultiWriter(original, w), r)
 		r.Close()
-		f.Close()
 	}()
 }
 
-// logLevelName maps raylib trace log level (0–6) to a string label.
-func logLevelName(level int) string {
-	switch level {
-	case 0:
-		return "ALL"
-	case 1:
-		return "TRACE"
-	case 2:
-		return "DEBUG"
-	case 3:
-		return "INFO"
-	case 4:
-		return "WARNING"
-	case 5:
-		return "ERROR"
-	case 6:
-		return "FATAL"
-	default:
-		return "LOG"
+// raylibLevels names raylib trace log levels 0–6.
+var raylibLevels = [...]string{"ALL", "TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "FATAL"}
+
+func levelName(level int) string {
+	if level >= 0 && level < len(raylibLevels) {
+		return raylibLevels[level]
 	}
+	return "LOG"
 }
 
-// Log appends a terminal/chat line to memory (capped at maxLines) and to logs/terminal.txt. Use for user input from the terminal.
+// Log adds a timestamped line to the terminal (capped in memory) and to terminal.txt.
 func (l *Logger) Log(line string) {
-	ts := time.Now().Format("2006-01-02 15:04:05")
-	stamped := "[" + ts + "] " + line
-
+	stamped := "[" + time.Now().Format(stamp) + "] " + line
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.lines = append(l.lines, stamped)
 	if len(l.lines) > maxLines {
 		l.lines = l.lines[len(l.lines)-maxLines:]
 	}
-	l.mu.Unlock()
-
-	f, err := os.OpenFile(LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
+	if l.termLog != nil {
+		_, _ = l.termLog.WriteString(stamped + "\n")
 	}
-	_, _ = f.WriteString(stamped + "\n")
-	_ = f.Close()
 }
 
-// LogEngine appends a line to logs/engine_log.txt. Used by the raylib trace callback (INFO, WARNING, etc.). Persists after exit.
-// Uses a single open file handle to avoid per-message open/close and allocations.
-func (l *Logger) LogEngine(logType int, msg string) {
-	ts := time.Now().Format("2006-01-02 15:04:05")
-	level := logLevelName(logType)
-	line := "[" + ts + "] [" + level + "] " + msg + "\n"
-
+// LogEngine appends a line to engine_log.txt. It matches raylib's trace log callback signature.
+func (l *Logger) LogEngine(level int, msg string) {
+	line := "[" + time.Now().Format(stamp) + "] [" + levelName(level) + "] " + msg + "\n"
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.engineLog != nil {
@@ -113,16 +90,21 @@ func (l *Logger) LogEngine(logType int, msg string) {
 	}
 }
 
-// Error appends an engine error to logs/engine_log.txt. Persists after the game exits; use for engine errors only.
+// Error appends an engine error to engine_log.txt.
 func (l *Logger) Error(msg string) {
-	l.LogEngine(5, msg) // 5 = ERROR in raylib
+	l.LogEngine(5, msg) // 5 = raylib LOG_ERROR
 }
 
-// Lines returns a copy of all stored terminal lines (from Log, not game logs).
+// Lines returns a copy of the terminal lines.
 func (l *Logger) Lines() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := make([]string, len(l.lines))
-	copy(out, l.lines)
-	return out
+	return append([]string(nil), l.lines...)
+}
+
+// Tail returns a copy of the last n terminal lines.
+func (l *Logger) Tail(n int) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.lines[max(len(l.lines)-n, 0):]...)
 }
