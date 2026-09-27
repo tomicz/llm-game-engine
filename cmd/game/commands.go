@@ -604,9 +604,11 @@ func registerHeightmapCmd(app *App) {
 		if hmSeed != 0 {
 			opts.Seed = hmSeed
 		}
-		if err := mapgen.ApplyHeightmapTerrain(app.Scene, opts); err != nil {
+		mesh, size, err := mapgen.GenerateTerrain(opts)
+		if err != nil {
 			return err
 		}
+		app.Scene.EnableTerrain(mesh, size)
 		app.Log.Log(fmt.Sprintf("Heightmap generated (terrain mesh %dx%d).", opts.Width, opts.Depth))
 		return nil
 	})

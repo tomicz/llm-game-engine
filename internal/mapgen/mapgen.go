@@ -1,10 +1,10 @@
 package mapgen
 
 import (
+	"errors"
 	"math"
 	"time"
 
-	"game-engine/internal/scene"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -41,160 +41,67 @@ func DefaultHeightMapOptions() HeightMapOptions {
 	}
 }
 
-// GenerateHeightMapCubes builds a height map as a grid of cube primitives sitting on Y=0.
-// Each tile becomes one cube whose Y scale is derived from fractal noise. The cubes are
-// centered around the world origin on XZ.
-func GenerateHeightMapCubes(opts HeightMapOptions) []scene.ObjectInstance {
-	if opts.Width <= 0 || opts.Depth <= 0 {
-		return nil
+// withDefaults returns opts with unset or invalid fields replaced by the defaults
+// and a time-based seed when Seed is 0.
+func (opts HeightMapOptions) withDefaults() HeightMapOptions {
+	def := DefaultHeightMapOptions()
+	// Need at least a 2x2 grid for meaningful deformation.
+	if opts.Width <= 1 {
+		opts.Width = def.Width
+	}
+	if opts.Depth <= 1 {
+		opts.Depth = def.Depth
 	}
 	if opts.TileSize <= 0 {
-		opts.TileSize = 1
+		opts.TileSize = def.TileSize
 	}
 	if opts.HeightScale <= 0 {
-		opts.HeightScale = 1
+		opts.HeightScale = def.HeightScale
 	}
 	if opts.Octaves <= 0 {
-		opts.Octaves = 1
+		opts.Octaves = def.Octaves
 	}
 	if opts.Frequency <= 0 {
-		opts.Frequency = 0.05
+		opts.Frequency = def.Frequency
 	}
 	if opts.Lacunarity <= 0 {
-		opts.Lacunarity = 2.0
+		opts.Lacunarity = def.Lacunarity
 	}
 	if opts.Gain <= 0 {
-		opts.Gain = 0.5
+		opts.Gain = def.Gain
 	}
-	seed := opts.Seed
-	if seed == 0 {
-		seed = time.Now().UnixNano()
+	if opts.Seed == 0 {
+		opts.Seed = time.Now().UnixNano()
 	}
-
-	// Center the map around the origin. First cube center is at (-extentX + halfTile, -extentZ + halfTile).
-	halfTile := opts.TileSize * 0.5
-	extentX := float32(opts.Width) * opts.TileSize * 0.5
-	extentZ := float32(opts.Depth) * opts.TileSize * 0.5
-	startX := -extentX + halfTile
-	startZ := -extentZ + halfTile
-
-	objs := make([]scene.ObjectInstance, 0, opts.Width*opts.Depth)
-	// All heightmap tiles should be static terrain (no gravity).
-
-	baseFreq := opts.Frequency
-	for z := 0; z < opts.Depth; z++ {
-		for x := 0; x < opts.Width; x++ {
-			nx := float32(x)
-			nz := float32(z)
-			// Sample fractal noise in a continuous domain; use X/Z indices scaled by base frequency.
-			h := fractalValueNoise2D(nx*baseFreq, nz*baseFreq, seed, opts.Octaves, opts.Lacunarity, opts.Gain)
-			// Map [0,1] noise to [minHeight, HeightScale].
-			minHeight := float32(0.15)
-			height := minHeight + h*(opts.HeightScale-minHeight)
-			// Keep height positive and finite.
-			if !isFinite(height) || height <= 0 {
-				height = minHeight
-			}
-
-			worldX := startX + float32(x)*opts.TileSize
-			worldZ := startZ + float32(z)*opts.TileSize
-			worldY := height * 0.5 // bottom at Y=0
-
-			static := false
-
-			objs = append(objs, scene.ObjectInstance{
-				Type: "cube",
-				Position: [3]float32{
-					worldX,
-					worldY,
-					worldZ,
-				},
-				Scale: [3]float32{
-					opts.TileSize,
-					height,
-					opts.TileSize,
-				},
-				Physics: &static,
-			})
-		}
-	}
-
-	return objs
+	return opts
 }
 
-// ApplyHeightmapTerrain generates a single deformed plane mesh using fractal noise and
-// installs it as optimized terrain in the given scene. This avoids thousands of cubes
-// and is much faster to render.
-func ApplyHeightmapTerrain(scn *scene.Scene, opts HeightMapOptions) error {
-	if opts.Width <= 1 || opts.Depth <= 1 {
-		// Need at least a 2x2 grid for meaningful deformation.
-		if opts.Width <= 1 {
-			opts.Width = 32
-		}
-		if opts.Depth <= 1 {
-			opts.Depth = 32
-		}
-	}
-	if opts.TileSize <= 0 {
-		opts.TileSize = 1
-	}
-	if opts.HeightScale <= 0 {
-		opts.HeightScale = 3
-	}
-	if opts.Octaves <= 0 {
-		opts.Octaves = 4
-	}
-	if opts.Frequency <= 0 {
-		opts.Frequency = 0.08
-	}
-	if opts.Lacunarity <= 0 {
-		opts.Lacunarity = 2.0
-	}
-	if opts.Gain <= 0 {
-		opts.Gain = 0.5
-	}
-	seed := opts.Seed
-	if seed == 0 {
-		seed = time.Now().UnixNano()
-	}
-
-	// World size of the plane; centered at origin.
-	widthWorld := float32(opts.Width) * opts.TileSize
-	depthWorld := float32(opts.Depth) * opts.TileSize
+// GenerateTerrain builds a single heightmapped mesh from fractal noise, centered on the origin in XZ
+// with its base at Y=0. It returns the mesh and its world size (width, max height, depth).
+// Must be called on the main thread after the window exists (it uploads the mesh to the GPU).
+func GenerateTerrain(opts HeightMapOptions) (mesh rl.Mesh, size [3]float32, err error) {
+	opts = opts.withDefaults()
 
 	// Build a grayscale heightmap image using fractal noise, then let raylib
 	// turn it into a heightmapped mesh. This avoids manual vertex pointer math.
 	img := rl.GenImageColor(opts.Width, opts.Depth, rl.Black)
-	baseFreq := opts.Frequency
-	for z := 0; z < opts.Depth; z++ {
-		for x := 0; x < opts.Width; x++ {
-			nx := float32(x)
-			nz := float32(z)
-			h := fractalValueNoise2D(nx*baseFreq, nz*baseFreq, seed, opts.Octaves, opts.Lacunarity, opts.Gain)
+	for z := range opts.Depth {
+		for x := range opts.Width {
+			h := fractalValueNoise2D(float32(x)*opts.Frequency, float32(z)*opts.Frequency, opts.Seed, opts.Octaves, opts.Lacunarity, opts.Gain)
 			if !isFinite(h) {
 				h = 0
 			}
-			if h < 0 {
-				h = 0
-			}
-			if h > 1 {
-				h = 1
-			}
-			v := uint8(h * 255)
-			c := rl.NewColor(v, v, v, 255)
-			rl.ImageDrawPixel(img, int32(x), int32(z), c)
+			v := uint8(min(max(h, 0), 1) * 255)
+			rl.ImageDrawPixel(img, int32(x), int32(z), rl.NewColor(v, v, v, 255))
 		}
 	}
-	size := rl.NewVector3(widthWorld, opts.HeightScale, depthWorld)
-	mesh := rl.GenMeshHeightmap(*img, size)
+	size = [3]float32{float32(opts.Width) * opts.TileSize, opts.HeightScale, float32(opts.Depth) * opts.TileSize}
+	mesh = rl.GenMeshHeightmap(*img, rl.NewVector3(size[0], size[1], size[2]))
 	rl.UnloadImage(img)
 	if mesh.VertexCount == 0 {
-		return nil
+		return rl.Mesh{}, size, errors.New("heightmap: mesh generation failed")
 	}
-
-	terrainSize := [3]float32{widthWorld, opts.HeightScale, depthWorld}
-	scn.EnableTerrain(mesh, terrainSize)
-	return nil
+	return mesh, size, nil
 }
 
 // fractalValueNoise2D is simple fractal value noise: layered smooth value noise with
@@ -268,4 +175,3 @@ func smoothStep(t float32) float32 {
 func isFinite(f float32) bool {
 	return !math.IsNaN(float64(f)) && !math.IsInf(float64(f), 0)
 }
-
