@@ -58,8 +58,11 @@ func Download(url string, destDir string) (savedPath string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("download: %w", err)
 	}
-	defer out.Close()
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	_, err = io.Copy(out, resp.Body)
+	if closeErr := out.Close(); err == nil {
+		err = closeErr // a failed flush means the file is incomplete
+	}
+	if err != nil {
 		_ = os.Remove(savedPath)
 		return "", fmt.Errorf("download: %w", err)
 	}
