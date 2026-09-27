@@ -38,13 +38,8 @@ type Selection struct {
 	Texture  string // path to texture if set (e.g. assets/textures/downloaded/foo.png)
 }
 
-// AppendNodes appends inspector nodes to dst when visible is true, after updating labels from sel.
-// When visible is false, dst is returned unchanged. Call every frame so visibility and content stay in sync.
-func (in *Inspector) AppendNodes(dst []*Node, visible bool, sel Selection) []*Node {
-	if !visible {
-		return dst
-	}
-	in.title.Text = "Inspector"
+// AppendNodes updates the inspector labels from sel and appends its nodes to dst.
+func (in *Inspector) AppendNodes(dst []*Node, sel Selection) []*Node {
 	in.name.Text = "Name: " + sel.Name
 	in.position.Text = fmt.Sprintf("Position: %.2f, %.2f, %.2f", sel.Position[0], sel.Position[1], sel.Position[2])
 	in.scale.Text = fmt.Sprintf("Scale: %.2f, %.2f, %.2f", sel.Scale[0], sel.Scale[1], sel.Scale[2])

@@ -1,235 +1,193 @@
 package main
 
 import (
-	"context"
-	"fmt"
+	"os"
+
 	"game-engine/internal/agent"
+	"game-engine/internal/assets"
 	"game-engine/internal/commands"
 	"game-engine/internal/debug"
 	"game-engine/internal/engineconfig"
-	"game-engine/internal/llm"
+	"game-engine/internal/graphics"
 	"game-engine/internal/logger"
 	"game-engine/internal/scene"
 	"game-engine/internal/terminal"
 	"game-engine/internal/ui"
-	"os"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-// App holds all engine subsystems and shared state wired together in main().
+// App wires the engine subsystems together and runs the frame loop. Everything except the
+// background work started by background() runs on the main thread.
 type App struct {
-	Log       *logger.Logger
-	Scene     *scene.Scene
-	Debug     *debug.Debug
-	Registry  *commands.Registry
-	Terminal  *terminal.Terminal
-	UI        *ui.Engine
-	Inspector *ui.Inspector
-	Agent     *agent.Agent
-	Client    llm.Client
+	log       *logger.Logger
+	scene     *scene.Scene
+	debug     *debug.Debug
+	commands  *commands.Registry
+	terminal  *terminal.Terminal
+	ui        *ui.Engine
+	inspector *ui.Inspector
+	nodes     []*ui.Node // UI nodes for this frame; reused
 
-	// Config state
-	CurrentProvider string // "ollama", "openai", "groq", or "" (auto)
-	CurrentAIModel  string
-	CurrentFont     string
+	provider string // "ollama", "openai", or "groq"
+	model    string
+	font     string // path under assets/fonts/
+	agent    *agent.Agent
 
-	// Async result channels
-	DownloadDone     chan *downloadResult
-	SkyboxDone       chan *skyboxResult
-	FontDownloadDone chan *fontDownloadResult
-	PendingRunCmd    chan []string
-
-	// Internal draw state
-	baseNodes      []*ui.Node
-	uiFontTried    bool
-	engineFontPaths []string
+	tasks chan func() // results of background work, run on the main thread
 }
 
-type downloadResult struct {
-	Index int
-	Path  string
-	Err   error
+// NewApp creates the engine from the saved preferences. The window opens in Run.
+func NewApp() *App {
+	log := logger.New()
+	rl.SetTraceLogCallback(log.LogEngine)
+	prefs, err := engineconfig.Load()
+	if err != nil {
+		log.Log("config: " + err.Error())
+	}
+
+	a := &App{
+		log:       log,
+		scene:     scene.New(),
+		debug:     debug.New(),
+		commands:  commands.NewRegistry(),
+		ui:        ui.New(),
+		inspector: ui.NewInspector(),
+		font:      prefs.Font,
+		tasks:     make(chan func(), 16),
+	}
+	a.debug.SetShowFPS(prefs.ShowFPS)
+	a.debug.SetShowMemAlloc(prefs.ShowMemAlloc)
+	a.scene.SetGridVisible(prefs.GridVisible)
+	if os.Getenv("CAMERA_AWARENESS") == "1" {
+		a.scene.EnableViewAwareness(scene.NewViewAwarenessWithLogging())
+	}
+
+	a.registerCommands()
+	a.terminal = terminal.New(log, a.commands)
+	a.terminal.OnNaturalLanguage = a.handleNaturalLanguage
+
+	// The agent's prompt lists the registered commands, so set up AI after registering them.
+	provider := prefs.AIProvider
+	if provider == "" {
+		provider = detectProvider()
+	}
+	if err := a.setProvider(provider, prefs.AIModel); err != nil {
+		log.Log("LLM: " + err.Error())
+	}
+
+	if path, ok := assets.Find("assets/ui/default.css"); ok {
+		if err := a.ui.LoadCSS(path); err != nil {
+			log.Log("UI: " + err.Error())
+		}
+	}
+	a.savePrefs()
+	return a
 }
 
-type skyboxResult struct {
-	Path string
-	Err  error
+// Run opens the window and blocks until it is closed.
+func (a *App) Run() {
+	graphics.Run(a.init, a.update, a.draw)
 }
 
-type fontDownloadResult struct {
-	RelPath  string
-	FullPath string
-	Err      error
-}
-
-func (app *App) SaveEnginePrefs() {
-	_ = engineconfig.Save(engineconfig.EnginePrefs{
-		ShowFPS:      app.Debug.ShowFPS,
-		ShowMemAlloc: app.Debug.ShowMemAlloc,
-		GridVisible:  app.Scene.GridVisible,
-		AIProvider:   app.CurrentProvider,
-		AIModel:      app.CurrentAIModel,
-		Font:         app.CurrentFont,
-	})
-}
-
-// DefaultModelForProvider returns a sensible default model for a given provider.
-func DefaultModelForProvider(provider string) string {
-	switch provider {
-	case "groq":
-		return "llama-3.3-70b-versatile"
-	case "openai":
-		return "gpt-4o-mini"
-	case "ollama":
-		return "qwen3-coder:30b"
-	default:
-		return "gpt-4o-mini"
+// init runs once the window exists.
+func (a *App) init() {
+	if path, ok := assets.Find("assets/fonts/" + a.font); ok {
+		_ = a.loadFont(a.font, path)
 	}
 }
 
-// RebuildAgent recreates the LLM agent with the current client and wires it to the terminal.
-func (app *App) RebuildAgent() {
-	if app.Client == nil {
+func (a *App) update() {
+	a.runTasks()
+	a.terminal.Update()
+	if !a.terminal.IsOpen() {
+		a.scene.Update()
 		return
 	}
-	app.Agent = agent.New(app.Client, func() string { return app.CurrentAIModel })
-	agent.RegisterSceneHandlers(app.Agent, app.Scene, app.Registry, app.PendingRunCmd)
-	if app.Terminal != nil {
-		app.Terminal.GetViewContext = func() string { return app.Scene.GetViewContextSummary() }
-		app.Terminal.OnNaturalLanguage = func(line string, viewContext string) {
-			app.Log.Log("Thinking…")
-			summary, err := app.Agent.Run(context.Background(), line, viewContext)
-			if err != nil {
-				app.Log.Log(err.Error())
-			} else {
-				app.Log.Log(summary)
-			}
-		}
+	// Clicks on the UI overlay must not also select or deselect objects behind it.
+	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) && a.handleUIClick() {
+		return
 	}
+	a.scene.UpdateEditor(a.terminal.BarTop())
 }
 
-// BuildLLMClient creates an LLM client for the given provider using env vars for API keys.
-func BuildLLMClient(provider string) (llm.Client, error) {
-	switch provider {
-	case "openai":
-		key := os.Getenv("OPENAI_API_KEY")
-		if key == "" {
-			return nil, fmt.Errorf("OPENAI_API_KEY not set in .env")
-		}
-		return llm.NewOpenAICompat("openai", llm.OpenAIBaseURL, key, llm.AuthBearer), nil
-	case "groq":
-		key := os.Getenv("GROQ_API_KEY")
-		if key == "" {
-			return nil, fmt.Errorf("GROQ_API_KEY not set in .env")
-		}
-		return llm.NewOpenAICompat("groq", llm.GroqBaseURL, key, llm.AuthBearer), nil
-	case "ollama":
-		base := os.Getenv("OLLAMA_BASE_URL")
-		return llm.NewOllama(base), nil
-	default:
-		return nil, fmt.Errorf("unknown provider %q (use: ollama, openai, groq)", provider)
+// handleUIClick handles a left click on the UI overlay and reports whether it hit the overlay.
+func (a *App) handleUIClick() bool {
+	node, hit := a.ui.HitTest(rl.GetMouseX(), rl.GetMouseY())
+	if !hit {
+		return false
 	}
-}
-
-func (app *App) Update() {
-	drainChan(app.PendingRunCmd, func(args []string) {
-		if err := app.Registry.Execute(args); err != nil {
-			app.Log.Log(err.Error())
-		}
-	})
-
-	drainChan(app.DownloadDone, func(res *downloadResult) {
-		if res.Err != nil {
-			app.Log.Log(res.Err.Error())
-		} else if err := app.Scene.SetObjectTexture(res.Index, res.Path); err != nil {
-			app.Log.Log(err.Error())
-		} else {
-			app.Log.Log("Texture applied: " + res.Path)
-		}
-	})
-
-	drainChan(app.SkyboxDone, func(res *skyboxResult) {
-		if res.Err != nil {
-			app.Log.Log(res.Err.Error())
-		} else {
-			app.Scene.SetSkyboxPath(res.Path)
-			app.Log.Log("Skybox set: " + res.Path)
-		}
-	})
-
-	drainChan(app.FontDownloadDone, func(res *fontDownloadResult) {
-		if res.Err != nil {
-			app.Log.Log(res.Err.Error())
-		} else if err := app.UI.LoadFont(res.FullPath); err != nil {
-			app.Log.Log(err.Error())
-		} else {
-			app.CurrentFont = res.RelPath
-			app.Terminal.SetFont(app.UI.Font())
-			app.Debug.SetFont(app.UI.Font())
-			app.SaveEnginePrefs()
-			app.Log.Log("Font set: " + res.RelPath)
-		}
-	})
-
-	app.Terminal.Update()
-
-	if app.Terminal.IsOpen() {
-		app.Scene.UpdateEditor(true, terminal.BarHeight)
-		if obj, ok := app.Scene.SelectedObject(); ok {
-			if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-				screenH := int32(rl.GetScreenHeight())
-				mouseY := rl.GetMouseY()
-				if mouseY < screenH-int32(terminal.BarHeight) {
-					hitNode, hit := app.UI.HitTest(rl.GetMouseX(), mouseY)
-					if hit && hitNode != nil && hitNode.Class == "inspector-physics" {
-						_ = app.Scene.SetSelectedPhysics(!scene.PhysicsEnabledForObject(obj))
-					}
-				}
-			}
-		}
-	} else {
-		app.Scene.Update()
-	}
-}
-
-func (app *App) Draw() {
-	app.Scene.Draw(app.Terminal.IsOpen())
-	app.Debug.Draw()
-
-	obj, ok := app.Scene.SelectedObject()
-	nodes := app.Inspector.AppendNodes(app.baseNodes, app.Terminal.IsOpen() && ok, ui.Selection{
-		Name:     obj.Type,
-		Position: obj.Position,
-		Scale:    obj.Scale,
-		Physics:  scene.PhysicsEnabledForObject(obj),
-		Texture:  obj.Texture,
-	})
-
-	if !app.uiFontTried {
-		app.uiFontTried = true
-		for _, p := range app.engineFontPaths {
-			if err := app.UI.LoadFont(p); err == nil {
-				app.Terminal.SetFont(app.UI.Font())
-				app.Debug.SetFont(app.UI.Font())
-				break
-			}
+	if node.Class == "inspector-physics" {
+		if o, ok := a.scene.Selected(); ok {
+			o.SetPhysics(!o.PhysicsEnabled())
 		}
 	}
-
-	app.UI.SetNodes(nodes)
-	app.UI.Draw()
-	app.Terminal.Draw()
+	return true
 }
 
-// drainChan reads all pending values from a channel and calls fn for each.
-func drainChan[T any](ch chan T, fn func(T)) {
+func (a *App) draw() {
+	editing := a.terminal.IsOpen()
+	a.scene.Draw(editing)
+	a.debug.Draw()
+
+	a.nodes = a.nodes[:0]
+	if o, ok := a.scene.Selected(); ok && editing {
+		a.nodes = a.inspector.AppendNodes(a.nodes, ui.Selection{
+			Name:     o.Type,
+			Position: o.Position,
+			Scale:    o.Scale,
+			Physics:  o.PhysicsEnabled(),
+			Texture:  o.Texture,
+		})
+	}
+	a.ui.SetNodes(a.nodes)
+	a.ui.Draw()
+	a.terminal.Draw()
+}
+
+// background runs work on a new goroutine, then done with its result on the main thread at the
+// start of a later frame. work must not touch raylib, the scene, or other main-thread state.
+func background[T any](a *App, work func() (T, error), done func(T, error)) {
+	go func() {
+		v, err := work()
+		a.tasks <- func() { done(v, err) }
+	}()
+}
+
+// runTasks runs the completed background results queued since the last frame.
+func (a *App) runTasks() {
 	for {
 		select {
-		case v := <-ch:
-			fn(v)
+		case fn := <-a.tasks:
+			fn()
 		default:
 			return
 		}
+	}
+}
+
+// loadFont makes the font at path (rel is its name under assets/fonts/) the UI, terminal, and
+// debug font.
+func (a *App) loadFont(rel, path string) error {
+	if err := a.ui.LoadFont(path); err != nil {
+		return err
+	}
+	a.font = rel
+	a.terminal.SetFont(a.ui.Font())
+	a.debug.SetFont(a.ui.Font())
+	return nil
+}
+
+func (a *App) savePrefs() {
+	err := engineconfig.Save(engineconfig.EnginePrefs{
+		ShowFPS:      a.debug.ShowFPS,
+		ShowMemAlloc: a.debug.ShowMemAlloc,
+		GridVisible:  a.scene.GridVisible,
+		AIProvider:   a.provider,
+		AIModel:      a.model,
+		Font:         a.font,
+	})
+	if err != nil {
+		a.log.Error("config: " + err.Error())
 	}
 }

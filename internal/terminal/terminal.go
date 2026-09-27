@@ -1,64 +1,74 @@
+// Package terminal is the chat/command bar at the bottom of the screen, toggled with ESC.
 package terminal
 
 import (
+	"unicode/utf8"
+
 	"game-engine/internal/commands"
 	"game-engine/internal/logger"
-	"unicode/utf8"
+	"game-engine/internal/ui"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
 const (
-	BarHeight = 40
-	// When windowed, move bar up by this many pixels so it stays visible (avoids being cut off by taskbar/window bounds).
-	WindowedBarOffset = 56
+	barHeight = 40
+	// windowedBarOffset lifts the bar in windowed mode so it isn't cut off by the taskbar/window bounds.
+	windowedBarOffset = 56
 	prompt            = "> "
 	fontSize          = 20
 	padding           = 8
-	// Number of chat/log lines drawn above the input bar when terminal is open.
+	// maxLinesOnScreen is how many log lines are shown above the input bar.
 	maxLinesOnScreen = 14
 	lineHeight       = fontSize + 4
+	maxLineLength    = 200
 )
 
 var (
-	// Reused every frame when drawing the terminal bar to avoid per-frame color allocations.
-	termBarColor   = rl.NewColor(40, 40, 40, 255)
-	termLineColor  = rl.NewColor(80, 80, 80, 255)
-	termChatBgColor = rl.NewColor(24, 24, 24, 240)
+	barColor    = rl.NewColor(40, 40, 40, 255)
+	lineColor   = rl.NewColor(80, 80, 80, 255)
+	chatBgColor = rl.NewColor(24, 24, 24, 240)
 )
 
-// Terminal is the chat/terminal input bar at the bottom of the screen. It is shown/hidden with ESC.
-// When open, it handles typing and drawing; when closed, nothing is drawn and the player can move (WASD).
-// Lines starting with "cmd " are parsed as subcommand + flags and executed via the command registry.
-// Other lines are treated as natural language; if OnNaturalLanguage is set, it is called in a goroutine.
-// GetViewContext, if set, is called on the main thread when the user submits natural language; its result
-// is passed as the second argument so the LLM can reason about what the camera sees (e.g. "delete the one on the right").
+// Terminal is the input bar plus recent log lines. When open it captures typing and shows the
+// cursor; when closed nothing is drawn and the camera has the mouse. Submitted lines starting with
+// "cmd " run through the command registry; other lines go to OnNaturalLanguage.
 type Terminal struct {
-	log               *logger.Logger
-	reg               *commands.Registry
-	inputBuf          string
-	open              bool
-	font              rl.Font // optional; when set, Draw uses DrawTextEx instead of default font
-	GetViewContext    func() string       // optional; called on main thread when user submits NL
-	OnNaturalLanguage func(line string, viewContext string) // called in a goroutine when user submits a non-cmd line
+	log      *logger.Logger
+	reg      *commands.Registry
+	inputBuf string
+	open     bool
+	font     rl.Font
+	// OnNaturalLanguage handles a submitted non-command line. It is called on the main thread and
+	// must not block (start a goroutine for slow work).
+	OnNaturalLanguage func(line string)
 }
 
-// New returns a new Terminal that logs lines and runs "cmd ..." through reg. It starts closed (hidden); press ESC to open.
+// New returns a closed terminal that logs lines to log and runs commands through reg.
 func New(log *logger.Logger, reg *commands.Registry) *Terminal {
 	return &Terminal{log: log, reg: reg}
 }
 
-// IsOpen returns true when the terminal is visible and capturing input (player cannot move).
+// IsOpen reports whether the terminal is visible and capturing input.
 func (t *Terminal) IsOpen() bool {
 	return t.open
 }
 
-// SetFont sets the font used to draw the terminal bar (e.g. same as UI). Zero texture ID = use raylib default.
+// SetFont sets the font used to draw the terminal. A zero font means raylib's default.
 func (t *Terminal) SetFont(font rl.Font) {
 	t.font = font
 }
 
-// Update handles ESC (toggle open/closed), and when open: typing, backspace, enter. Call once per frame.
+// BarTop is the screen Y of the top of the input bar; mouse input below it belongs to the terminal.
+func (t *Terminal) BarTop() int32 {
+	y := int32(rl.GetScreenHeight()) - barHeight
+	if !rl.IsWindowFullscreen() {
+		y -= windowedBarOffset
+	}
+	return y
+}
+
+// Update handles ESC (toggle) and, while open, typing, paste, backspace, and enter.
 func (t *Terminal) Update() {
 	if rl.IsKeyPressed(rl.KeyEscape) {
 		t.open = !t.open
@@ -71,95 +81,62 @@ func (t *Terminal) Update() {
 	if !t.open {
 		return
 	}
-	// Paste: Ctrl+V (Windows/Linux) or Cmd+V (macOS)
-	if rl.IsKeyPressed(rl.KeyV) && (rl.IsKeyDown(rl.KeyLeftControl) || rl.IsKeyDown(rl.KeyRightControl) || rl.IsKeyDown(rl.KeyLeftSuper) || rl.IsKeyDown(rl.KeyRightSuper)) {
-		if pasted := rl.GetClipboardText(); pasted != "" {
-			t.inputBuf += pasted
-		}
+	// Paste: Ctrl+V (Windows/Linux) or Cmd+V (macOS).
+	ctrl := rl.IsKeyDown(rl.KeyLeftControl) || rl.IsKeyDown(rl.KeyRightControl) ||
+		rl.IsKeyDown(rl.KeyLeftSuper) || rl.IsKeyDown(rl.KeyRightSuper)
+	if ctrl && rl.IsKeyPressed(rl.KeyV) {
+		t.inputBuf += rl.GetClipboardText()
 	} else {
-		for {
-			c := rl.GetCharPressed()
-			if c == 0 {
-				break
-			}
-			t.inputBuf += string(rune(c))
+		for c := rl.GetCharPressed(); c != 0; c = rl.GetCharPressed() {
+			t.inputBuf += string(c)
 		}
 	}
-	if rl.IsKeyPressed(rl.KeyBackspace) && len(t.inputBuf) > 0 {
+	if (rl.IsKeyPressed(rl.KeyBackspace) || rl.IsKeyPressedRepeat(rl.KeyBackspace)) && t.inputBuf != "" {
 		_, size := utf8.DecodeLastRuneInString(t.inputBuf)
 		t.inputBuf = t.inputBuf[:len(t.inputBuf)-size]
 	}
 	if (rl.IsKeyPressed(rl.KeyEnter) || rl.IsKeyPressed(rl.KeyKpEnter)) && t.inputBuf != "" {
 		line := t.inputBuf
-		t.log.Log(line)
 		t.inputBuf = ""
-
-		if args, isCmd := commands.Parse(line); isCmd {
-			if err := t.reg.Execute(args); err != nil {
-				t.log.Log(err.Error())
-			}
-		} else if t.OnNaturalLanguage != nil {
-			viewCtx := ""
-			if t.GetViewContext != nil {
-				viewCtx = t.GetViewContext()
-			}
-			viewCtxCopy := viewCtx
-			go t.OnNaturalLanguage(line, viewCtxCopy)
-		} else {
-			t.log.Log(line)
-		}
+		t.log.Log(line)
+		t.submit(line)
 	}
 }
 
-// Draw draws the terminal bar at the bottom when open, and the recent chat/log lines above it.
-// Uses GetScreenWidth/GetScreenHeight so the bar matches the 2D overlay coordinate system (correct in fullscreen).
+func (t *Terminal) submit(line string) {
+	if args, isCmd := commands.Parse(line); isCmd {
+		if err := t.reg.Execute(args); err != nil {
+			t.log.Log(err.Error())
+		}
+		return
+	}
+	if t.OnNaturalLanguage != nil {
+		t.OnNaturalLanguage(line)
+	}
+}
+
+// Draw draws the input bar and, above it, the most recent log lines. Does nothing when closed.
 func (t *Terminal) Draw() {
 	if !t.open {
 		return
 	}
-	screenW := int(rl.GetScreenWidth())
-	screenH := int(rl.GetScreenHeight())
-	barY := screenH - BarHeight
-	if !rl.IsWindowFullscreen() {
-		barY -= WindowedBarOffset
-	}
+	screenW := int32(rl.GetScreenWidth())
+	barY := t.BarTop()
 
-	// Chat history area above the bar: last maxLinesOnScreen lines
-	chatHeight := maxLinesOnScreen * lineHeight
-	chatY := barY - chatHeight
-	if chatY < 0 {
-		chatHeight = barY
-		chatY = 0
-	}
+	chatHeight := int32(maxLinesOnScreen * lineHeight)
+	chatY := max(barY-chatHeight, 0)
+	chatHeight = barY - chatY
 	if chatHeight > 0 {
-		rl.DrawRectangle(0, int32(chatY), int32(screenW), int32(chatHeight), termChatBgColor)
+		rl.DrawRectangle(0, chatY, screenW, chatHeight, chatBgColor)
 	}
-	lines := t.log.Lines()
-	start := 0
-	if len(lines) > maxLinesOnScreen {
-		start = len(lines) - maxLinesOnScreen
-	}
-	for i := start; i < len(lines); i++ {
-		y := chatY + (i-start)*lineHeight + padding
-		line := lines[i]
-		if len(line) > 200 {
-			line = line[:197] + "..."
+	for i, line := range t.log.Tail(maxLinesOnScreen) {
+		if len(line) > maxLineLength {
+			line = line[:maxLineLength-3] + "..."
 		}
-		if t.font.Texture.ID != 0 {
-			rl.DrawTextEx(t.font, line, rl.NewVector2(float32(padding), float32(y)), float32(fontSize), 1, rl.LightGray)
-		} else {
-			rl.DrawText(line, int32(padding), int32(y), int32(fontSize), rl.LightGray)
-		}
+		ui.DrawText(t.font, line, padding, chatY+int32(i*lineHeight)+padding, fontSize, rl.LightGray)
 	}
 
-	// Input bar
-	rl.DrawRectangle(0, int32(barY), int32(screenW), int32(BarHeight), termBarColor)
-	rl.DrawRectangle(0, int32(barY), int32(screenW), 1, termLineColor)
-
-	text := prompt + t.inputBuf + "|"
-	if t.font.Texture.ID != 0 {
-		rl.DrawTextEx(t.font, text, rl.NewVector2(float32(padding), float32(barY+padding)), float32(fontSize), 1, rl.White)
-	} else {
-		rl.DrawText(text, int32(padding), int32(barY+padding), int32(fontSize), rl.White)
-	}
+	rl.DrawRectangle(0, barY, screenW, barHeight, barColor)
+	rl.DrawRectangle(0, barY, screenW, 1, lineColor)
+	ui.DrawText(t.font, prompt+t.inputBuf+"|", padding, barY+padding, fontSize, rl.White)
 }

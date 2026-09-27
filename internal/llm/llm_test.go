@@ -45,7 +45,7 @@ func TestOpenAICompatComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL, "secret", AuthBearer)
+	c := NewOpenAICompat("test", srv.URL, "secret")
 	got, err := c.Complete(context.Background(), "gpt-test", "sys prompt", "hello")
 	if err != nil {
 		t.Fatalf("Complete error: %v", err)
@@ -75,7 +75,7 @@ func TestOpenAICompatErrors(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			c := NewOpenAICompat("test", srv.URL, "k", AuthBearer)
+			c := NewOpenAICompat("test", srv.URL, "k")
 			_, err := c.Complete(context.Background(), "m", "s", "u")
 			if err == nil {
 				t.Fatal("expected error")
@@ -94,7 +94,7 @@ func TestOpenAICompatMissingKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenAICompat("test", srv.URL, "", AuthBearer)
+	c := NewOpenAICompat("test", srv.URL, "")
 	_, err := c.Complete(context.Background(), "m", "s", "u")
 	if err == nil || !strings.Contains(err.Error(), "API key not set") {
 		t.Errorf("error = %v, want API key not set", err)
@@ -112,7 +112,7 @@ func TestOpenAICompatContextCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	c := NewOpenAICompat("test", srv.URL, "k", AuthBearer)
+	c := NewOpenAICompat("test", srv.URL, "k")
 	if _, err := c.Complete(ctx, "m", "s", "u"); err == nil {
 		t.Fatal("expected error for canceled context")
 	}
