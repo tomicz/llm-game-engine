@@ -1,18 +1,22 @@
 package fonts
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"game-engine/internal/assets"
 )
 
 // Extensions we consider as font files.
 var Exts = []string{".ttf", ".otf"}
 
-// BaseDirs returns candidate base directories for fonts (relative to process cwd).
-// First that exists is typically used when scanning.
+// BaseDirs returns the candidate font directories (assets/fonts under each asset search root).
 func BaseDirs() []string {
-	return []string{"assets/fonts", "../../assets/fonts"}
+	return assets.Candidates("assets/fonts")
 }
 
 // StripAssetsFontsPrefix removes a leading "assets/fonts/" or "assets\fonts\" from path
@@ -32,27 +36,21 @@ func StripAssetsFontsPrefix(path string) string {
 func ScanDir(dir string) ([]string, error) {
 	var out []string
 	dir = filepath.Clean(dir)
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() || !slices.Contains(Exts, strings.ToLower(filepath.Ext(path))) {
 			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(path))
-		for _, e := range Exts {
-			if ext == e {
-				rel, err := filepath.Rel(dir, path)
-				if err != nil {
-					return err
-				}
-				out = append(out, filepath.ToSlash(rel))
-				return nil
-			}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
 		}
+		out = append(out, filepath.ToSlash(rel))
 		return nil
 	})
 	return out, err
@@ -124,7 +122,7 @@ func FindFont(search string) (relPath string, fullPath string, err error) {
 		for _, rel := range list {
 			relNorm := normalizeForMatch(rel)
 			if strings.Contains(relNorm, norm) {
-				full := base + "/" + rel
+				full := filepath.Join(base, rel)
 				if _, err := os.Stat(full); err == nil {
 					candidates = append(candidates, struct{ rel, full string }{rel, full})
 				}
