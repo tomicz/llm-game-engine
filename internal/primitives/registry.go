@@ -1,77 +1,115 @@
+// Package primitives draws the engine's built-in 3D shapes (cube, sphere, cylinder, plane) and the
+// runtime-generated terrain mesh with a shared lit shader.
 package primitives
 
 import (
+	"slices"
+
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-// cached holds mesh and material for a primitive type. Created lazily on first Draw.
-// texturedMtl is used when drawing with an albedo texture (same mesh, different material).
-type cached struct {
-	mesh       rl.Mesh
-	mtl        rl.Material
-	texturedMtl rl.Material
+// Shape names. Terrain is not spawnable: its mesh is generated at runtime (see SetTerrainMesh).
+const (
+	Cube     = "cube"
+	Sphere   = "sphere"
+	Cylinder = "cylinder"
+	Plane    = "plane"
+	Terrain  = "terrain"
+)
+
+// Shapes lists the spawnable primitive types in display order.
+var Shapes = []string{Cube, Sphere, Cylinder, Plane}
+
+// IsShape reports whether name is a spawnable primitive type (terrain excluded).
+func IsShape(name string) bool {
+	return slices.Contains(Shapes, name)
 }
 
-// Registry maps primitive type names to mesh+material. Meshes are created on first use
-// so that GPU resources are allocated after the window/OpenGL context exists.
+// Mesh resolution for curved shapes.
+const (
+	sphereRings    = 16
+	sphereSlices   = 16
+	cylinderSlices = 16
+)
+
+// shapeDef describes how to build a unit-sized shape. All shapes span 1 unit on each axis
+// (plane: 1×1 in XZ) so that scale is the object's size in world units.
+type shapeDef struct {
+	gen func() rl.Mesh
+	// centerOffset moves the mesh in model space so the object's position is its center
+	// (raylib's cylinder has its base at Y=0).
+	centerOffset [3]float32
+}
+
+var shapeDefs = map[string]shapeDef{
+	Cube:     {gen: func() rl.Mesh { return rl.GenMeshCube(1, 1, 1) }},
+	Sphere:   {gen: func() rl.Mesh { return rl.GenMeshSphere(0.5, sphereRings, sphereSlices) }},
+	Cylinder: {gen: func() rl.Mesh { return rl.GenMeshCylinder(0.5, 1, cylinderSlices) }, centerOffset: [3]float32{0, -0.5, 0}},
+	Plane:    {gen: func() rl.Mesh { return rl.GenMeshPlane(1, 1, 1, 1) }},
+}
+
+// defaultPrimitiveColor is the albedo for objects without a color.
+var defaultPrimitiveColor = rl.NewColor(128, 128, 128, 255)
+
+// Registry owns primitive meshes and the two shared lit materials (plain and textured). GPU
+// resources are created lazily on first use so they exist only after the window/OpenGL context.
 type Registry struct {
-	cache          map[string]cached
-	viewPos        [3]float32 // camera position, set each frame for lighting
-	lightDir       [3]float32 // direction to light (normalized), set each frame
-	terrainUVScale [2]float32 // UV tiling for terrain mesh (u,v); defaults to (1,1)
+	meshes      map[string]rl.Mesh
+	lit         litMaterial
+	litTextured litMaterial
+	ready       bool
+	terrainUV   [2]float32 // texture tiling for the terrain mesh
 }
 
-// NewRegistry returns a registry with no primitives. Cube is created on first Draw.
+// NewRegistry returns an empty registry. Nothing touches the GPU until SetView or Draw.
 func NewRegistry() *Registry {
 	return &Registry{
-		cache:          make(map[string]cached),
-		lightDir:       [3]float32{0.5, 1, 0.5}, // default: from above-right
-		terrainUVScale: [2]float32{1, 1},
+		meshes:    make(map[string]rl.Mesh),
+		terrainUV: [2]float32{1, 1},
 	}
 }
 
-// SetTerrainMesh replaces the cached terrain mesh and materials. Used for optimized
-// heightmapped terrain so we draw a single deformed plane instead of many cubes.
-// Safe to call multiple times; previous terrain GPU resources are released.
+func (r *Registry) ensureMaterials() {
+	if r.ready {
+		return
+	}
+	r.lit = newLitMaterial(litFS)
+	r.litTextured = newLitMaterial(litTexturedFS)
+	r.ready = true
+}
+
+// SetView uploads the camera position and direction-to-light for this frame. Call once per frame,
+// inside BeginMode3D, before drawing primitives.
+func (r *Registry) SetView(viewPos, lightDir [3]float32) {
+	r.ensureMaterials()
+	r.lit.setView(viewPos, lightDir)
+	r.litTextured.setView(viewPos, lightDir)
+}
+
+// SetTerrainMesh installs mesh as the terrain shape, releasing any previous terrain mesh.
+// The registry takes ownership of mesh.
 func (r *Registry) SetTerrainMesh(mesh rl.Mesh) {
-	if c, ok := r.cache["terrain"]; ok {
-		rl.UnloadMesh(&c.mesh)
-		rl.UnloadMaterial(c.mtl)
-		rl.UnloadMaterial(c.texturedMtl)
-		delete(r.cache, "terrain")
-	}
-	mtl := rl.LoadMaterialDefault()
-	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = defaultPrimitiveColor
-	}
-	shader := loadLitShader()
-	if rl.IsShaderValid(shader) {
-		mtl.Shader = shader
-	}
-	texturedMtl := rl.LoadMaterialDefault()
-	if albedo := texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = rl.White
-	}
-	if ts := loadLitTexturedShader(); rl.IsShaderValid(ts) {
-		texturedMtl.Shader = ts
-	}
-	r.cache["terrain"] = cached{mesh: mesh, mtl: mtl, texturedMtl: texturedMtl}
-	r.terrainUVScale = [2]float32{1, 1}
+	r.ClearTerrain()
+	r.meshes[Terrain] = mesh
+	r.terrainUV = [2]float32{1, 1}
 }
 
-// ClearTerrain removes the terrain mesh from the cache and unloads GPU resources.
-// Call when the terrain object is deleted so the mesh can be freed.
+// ClearTerrain releases the terrain mesh, if any.
 func (r *Registry) ClearTerrain() {
-	if c, ok := r.cache["terrain"]; ok {
-		rl.UnloadMesh(&c.mesh)
-		rl.UnloadMaterial(c.mtl)
-		rl.UnloadMaterial(c.texturedMtl)
-		delete(r.cache, "terrain")
+	if m, ok := r.meshes[Terrain]; ok {
+		rl.UnloadMesh(&m)
+		delete(r.meshes, Terrain)
 	}
+}
+
+// HasTerrain reports whether a terrain mesh is installed.
+func (r *Registry) HasTerrain() bool {
+	_, ok := r.meshes[Terrain]
+	return ok
 }
 
 // SetTerrainUVScale sets how many times the terrain texture repeats across the X/Z extent.
-// For example, (4,4) tiles the texture 4x4 across the heightmap; (1,1) is the default (stretched).
+// For example, (4,4) tiles the texture 4x4; (1,1) stretches it once. Non-positive values mean 1.
 func (r *Registry) SetTerrainUVScale(u, v float32) {
 	if u <= 0 {
 		u = 1
@@ -79,432 +117,84 @@ func (r *Registry) SetTerrainUVScale(u, v float32) {
 	if v <= 0 {
 		v = 1
 	}
-	r.terrainUVScale = [2]float32{u, v}
+	r.terrainUV = [2]float32{u, v}
 }
 
-// SetView sets camera position and direction-to-light for this frame. Call once per frame
-// before drawing objects so lit primitives (e.g. cube) get correct shading.
-func (r *Registry) SetView(viewPos, lightDir [3]float32) {
-	r.viewPos = viewPos
-	r.lightDir = lightDir
+// mesh returns the mesh for a shape, generating built-in shapes on first use.
+func (r *Registry) mesh(name string) (rl.Mesh, bool) {
+	if m, ok := r.meshes[name]; ok {
+		return m, true
+	}
+	def, ok := shapeDefs[name]
+	if !ok {
+		return rl.Mesh{}, false
+	}
+	m := def.gen()
+	r.meshes[name] = m
+	return m, true
 }
 
-// defaultPrimitiveColor is the albedo tint for cube and sphere (basic material).
-var defaultPrimitiveColor = rl.NewColor(128, 128, 128, 255)
+// Draw draws one instance of a shape at position (its center) with scale; zero scale components
+// mean 1. tint is RGBA 0–1, or nil for the default gray. Unknown shapes are skipped.
+// Must be called between BeginMode3D and EndMode3D, after SetView.
+func (r *Registry) Draw(name string, position, scale [3]float32, tint *[4]float32) {
+	r.draw(name, position, scale, tint, nil)
+}
 
-// defaultSphereRings and defaultSphereSlices control sphere mesh resolution.
-const defaultSphereRings = 16
-const defaultSphereSlices = 16
-
-// defaultCylinderSlices controls cylinder mesh resolution.
-const defaultCylinderSlices = 16
-
-// defaultPlaneResX/Z: 1 subdivision = single quad (1×1 in XZ).
-const defaultPlaneResX = 1
-const defaultPlaneResZ = 1
-
-// ensureCube creates the cube mesh and material if not yet cached.
-// Uses a simple lighting shader (directional light + ambient) so the cube has visible shading.
-func (r *Registry) ensureCube() {
-	if _, ok := r.cache["cube"]; ok {
+// DrawWithTexture is Draw with tex as the albedo map. Invalid textures fall back to Draw.
+func (r *Registry) DrawWithTexture(name string, position, scale [3]float32, tex rl.Texture2D, tint *[4]float32) {
+	if !rl.IsTextureValid(tex) {
+		r.draw(name, position, scale, tint, nil)
 		return
 	}
-	mesh := rl.GenMeshCube(1, 1, 1)
-	mtl := rl.LoadMaterialDefault()
-	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = defaultPrimitiveColor
-	}
-	shader := loadLitShader()
-	if rl.IsShaderValid(shader) {
-		mtl.Shader = shader
-	}
-	texturedMtl := rl.LoadMaterialDefault()
-	if albedo := texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = rl.White
-	}
-	if ts := loadLitTexturedShader(); rl.IsShaderValid(ts) {
-		texturedMtl.Shader = ts
-	}
-	r.cache["cube"] = cached{mesh: mesh, mtl: mtl, texturedMtl: texturedMtl}
+	r.draw(name, position, scale, tint, &tex)
 }
 
-// ensureSphere creates the sphere mesh and material if not yet cached.
-// Reuses the same lit shader as the cube.
-func (r *Registry) ensureSphere() {
-	if _, ok := r.cache["sphere"]; ok {
+func (r *Registry) draw(name string, position, scale [3]float32, tint *[4]float32, tex *rl.Texture2D) {
+	mesh, ok := r.mesh(name)
+	if !ok {
 		return
 	}
-	// Radius 0.5 so diameter = 1, matching cube side length (1) for same default size.
-	mesh := rl.GenMeshSphere(0.5, defaultSphereRings, defaultSphereSlices)
-	mtl := rl.LoadMaterialDefault()
-	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = defaultPrimitiveColor
+	r.ensureMaterials()
+	m := &r.lit
+	if tex != nil {
+		m = &r.litTextured
+		uv := [2]float32{1, 1}
+		if name == Terrain {
+			// Terrain UVs go beyond 0–1 when tiled, so the texture must repeat.
+			rl.SetTextureWrap(*tex, rl.TextureWrapRepeat)
+			uv = r.terrainUV
+		}
+		rl.SetMaterialTexture(&m.mtl, rl.MapAlbedo, *tex)
+		m.setUVScale(uv)
 	}
-	shader := loadLitShader()
-	if rl.IsShaderValid(shader) {
-		mtl.Shader = shader
+	// DrawMesh uploads the albedo color as the shader's colDiffuse uniform.
+	if albedo := m.mtl.GetMap(rl.MapAlbedo); albedo != nil {
+		albedo.Color = tintToColor(tint)
 	}
-	texturedMtl := rl.LoadMaterialDefault()
-	if albedo := texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = rl.White
-	}
-	if ts := loadLitTexturedShader(); rl.IsShaderValid(ts) {
-		texturedMtl.Shader = ts
-	}
-	r.cache["sphere"] = cached{mesh: mesh, mtl: mtl, texturedMtl: texturedMtl}
+	rl.DrawMesh(mesh, m.mtl, modelMatrix(position, scale, shapeDefs[name].centerOffset))
 }
 
-// ensureCylinder creates the cylinder mesh and material if not yet cached.
-// Radius 0.5 and height 1 so diameter and height match cube side length (1). Reuses lit shader.
-func (r *Registry) ensureCylinder() {
-	if _, ok := r.cache["cylinder"]; ok {
-		return
+// modelMatrix returns the transform that centers the unit mesh (centerOffset), scales it, then
+// moves it to position. Zero scale components are treated as 1.
+func modelMatrix(position, scale, centerOffset [3]float32) rl.Matrix {
+	for i := range scale {
+		if scale[i] == 0 {
+			scale[i] = 1
+		}
 	}
-	mesh := rl.GenMeshCylinder(0.5, 1, defaultCylinderSlices)
-	mtl := rl.LoadMaterialDefault()
-	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = defaultPrimitiveColor
-	}
-	shader := loadLitShader()
-	if rl.IsShaderValid(shader) {
-		mtl.Shader = shader
-	}
-	texturedMtl := rl.LoadMaterialDefault()
-	if albedo := texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = rl.White
-	}
-	if ts := loadLitTexturedShader(); rl.IsShaderValid(ts) {
-		texturedMtl.Shader = ts
-	}
-	r.cache["cylinder"] = cached{mesh: mesh, mtl: mtl, texturedMtl: texturedMtl}
+	// raylib's MatrixMultiply(a, b) applies a first, then b.
+	m := rl.MatrixMultiply(
+		rl.MatrixTranslate(centerOffset[0], centerOffset[1], centerOffset[2]),
+		rl.MatrixScale(scale[0], scale[1], scale[2]),
+	)
+	return rl.MatrixMultiply(m, rl.MatrixTranslate(position[0], position[1], position[2]))
 }
 
-// ensurePlane creates the plane (quad) mesh and material if not yet cached.
-// 1×1 in XZ, centered at origin (raylib plane is centered). Reuses lit shader.
-func (r *Registry) ensurePlane() {
-	if _, ok := r.cache["plane"]; ok {
-		return
-	}
-	mesh := rl.GenMeshPlane(1, 1, defaultPlaneResX, defaultPlaneResZ)
-	mtl := rl.LoadMaterialDefault()
-	if albedo := mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = defaultPrimitiveColor
-	}
-	shader := loadLitShader()
-	if rl.IsShaderValid(shader) {
-		mtl.Shader = shader
-	}
-	texturedMtl := rl.LoadMaterialDefault()
-	if albedo := texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = rl.White
-	}
-	if ts := loadLitTexturedShader(); rl.IsShaderValid(ts) {
-		texturedMtl.Shader = ts
-	}
-	r.cache["plane"] = cached{mesh: mesh, mtl: mtl, texturedMtl: texturedMtl}
-}
-
-// loadLitShader returns a shader that does simple directional light + ambient.
-// Used by cube and sphere. Same vertex attributes as raylib meshes: vertexPosition, vertexTexCoord, vertexNormal.
-func loadLitShader() rl.Shader {
-	return rl.LoadShaderFromMemory(litVS, litFS)
-}
-
-// loadLitTexturedShader returns a shader that samples albedo texture and applies directional light + ambient.
-// Used when drawing primitives with a texture (MapAlbedo set on material).
-func loadLitTexturedShader() rl.Shader {
-	return rl.LoadShaderFromMemory(litVS, litTexturedFS)
-}
-
-const (
-	litVS = `#version 330
-in vec3 vertexPosition;
-in vec2 vertexTexCoord;
-in vec3 vertexNormal;
-uniform mat4 matProjection;
-uniform mat4 matView;
-uniform mat4 matModel;
-out vec3 fragPosition;
-out vec2 fragTexCoord;
-out vec3 fragNormal;
-void main() {
-  vec4 worldPos = matModel * vec4(vertexPosition, 1.0);
-  fragPosition = worldPos.xyz;
-  fragTexCoord = vertexTexCoord;
-  fragNormal = mat3(matModel) * vertexNormal;
-  gl_Position = matProjection * matView * worldPos;
-}
-`
-	litFS = `#version 330
-in vec3 fragPosition;
-in vec2 fragTexCoord;
-in vec3 fragNormal;
-uniform vec4 colDiffuse;
-uniform vec3 viewPos;
-uniform vec3 lightDir;
-uniform vec4 ambient;
-uniform vec3 lightColor;
-uniform float lightIntensity;
-uniform float specularPower;
-uniform float specularStrength;
-out vec4 finalColor;
-void main() {
-  vec4 tint = colDiffuse;
-  vec3 N = normalize(fragNormal);
-  vec3 L = normalize(lightDir);
-  vec3 V = normalize(viewPos - fragPosition);
-  float NdotL = max(dot(N, L), 0.0);
-  vec3 diffuse = tint.rgb * NdotL * lightColor * lightIntensity;
-  vec3 amb = ambient.rgb * tint.rgb;
-  vec3 H = normalize(L + V);
-  float NdotH = max(dot(N, H), 0.0);
-  float spec = pow(NdotH, specularPower) * specularStrength;
-  vec3 specular = lightColor * spec * (NdotL > 0.0 ? 1.0 : 0.0);
-  finalColor = vec4(amb + diffuse + specular, tint.a);
-}
-`
-	// litTexturedFS: same as litFS but tint from albedo texture * colDiffuse (for textured primitives).
-	litTexturedFS = `#version 330
-in vec3 fragPosition;
-in vec2 fragTexCoord;
-in vec3 fragNormal;
-uniform vec4 colDiffuse;
-uniform vec3 viewPos;
-uniform vec3 lightDir;
-uniform vec4 ambient;
-uniform vec3 lightColor;
-uniform float lightIntensity;
-uniform float specularPower;
-uniform float specularStrength;
-uniform sampler2D albedoMap;
-uniform vec2 uvScale;
-out vec4 finalColor;
-void main() {
-  vec2 uv = fragTexCoord * uvScale;
-  vec4 texColor = texture(albedoMap, uv);
-  vec4 tint = texColor * colDiffuse;
-  vec3 N = normalize(fragNormal);
-  vec3 L = normalize(lightDir);
-  vec3 V = normalize(viewPos - fragPosition);
-  float NdotL = max(dot(N, L), 0.0);
-  vec3 diffuse = tint.rgb * NdotL * lightColor * lightIntensity;
-  vec3 amb = ambient.rgb * tint.rgb;
-  vec3 H = normalize(L + V);
-  float NdotH = max(dot(N, H), 0.0);
-  float spec = pow(NdotH, specularPower) * specularStrength;
-  vec3 specular = lightColor * spec * (NdotL > 0.0 ? 1.0 : 0.0);
-  finalColor = vec4(amb + diffuse + specular, tint.a);
-}
-`
-)
-
-// defaultAmbient is the ambient term (dim so shadowed areas aren't pure black).
-var defaultAmbient = [4]float32{0.2, 0.22, 0.26, 1.0}
-
-// defaultLightColor is a soft warm-white for the directional light.
-var defaultLightColor = [3]float32{1.0, 0.98, 0.95}
-
-// defaultLightIntensity scales the directional diffuse (0–1).
-const defaultLightIntensity = float32(0.75)
-
-// defaultSpecularPower controls highlight tightness (higher = smaller, sharper highlight).
-const defaultSpecularPower = float32(48.0)
-
-// defaultSpecularStrength scales specular contribution (0–1).
-const defaultSpecularStrength = float32(0.35)
-
-// setLitShaderUniforms sets viewPos, lightDir, ambient, light color/intensity, and specular on the given shader (cgo-safe: local arrays).
-func (r *Registry) setLitShaderUniforms(shader rl.Shader) {
-	if !rl.IsShaderValid(shader) {
-		return
-	}
-	viewPos := [3]float32{r.viewPos[0], r.viewPos[1], r.viewPos[2]}
-	lightDir := [3]float32{r.lightDir[0], r.lightDir[1], r.lightDir[2]}
-	amb := [4]float32{defaultAmbient[0], defaultAmbient[1], defaultAmbient[2], defaultAmbient[3]}
-	lightColor := [3]float32{defaultLightColor[0], defaultLightColor[1], defaultLightColor[2]}
-	if loc := rl.GetShaderLocation(shader, "viewPos"); loc >= 0 {
-		rl.SetShaderValueV(shader, loc, viewPos[:], rl.ShaderUniformVec3, 1)
-	}
-	if loc := rl.GetShaderLocation(shader, "lightDir"); loc >= 0 {
-		rl.SetShaderValueV(shader, loc, lightDir[:], rl.ShaderUniformVec3, 1)
-	}
-	if loc := rl.GetShaderLocation(shader, "ambient"); loc >= 0 {
-		rl.SetShaderValueV(shader, loc, amb[:], rl.ShaderUniformVec4, 1)
-	}
-	if loc := rl.GetShaderLocation(shader, "lightColor"); loc >= 0 {
-		rl.SetShaderValueV(shader, loc, lightColor[:], rl.ShaderUniformVec3, 1)
-	}
-	if loc := rl.GetShaderLocation(shader, "lightIntensity"); loc >= 0 {
-		rl.SetShaderValue(shader, loc, []float32{defaultLightIntensity}, rl.ShaderUniformFloat)
-	}
-	if loc := rl.GetShaderLocation(shader, "specularPower"); loc >= 0 {
-		rl.SetShaderValue(shader, loc, []float32{defaultSpecularPower}, rl.ShaderUniformFloat)
-	}
-	if loc := rl.GetShaderLocation(shader, "specularStrength"); loc >= 0 {
-		rl.SetShaderValue(shader, loc, []float32{defaultSpecularStrength}, rl.ShaderUniformFloat)
-	}
-}
-
-// setColDiffuse sets the colDiffuse uniform (RGBA 0-1) for per-object tint. Call before DrawMesh when using tint.
-func (r *Registry) setColDiffuse(shader rl.Shader, tint [4]float32) {
-	if loc := rl.GetShaderLocation(shader, "colDiffuse"); loc >= 0 {
-		rl.SetShaderValueV(shader, loc, tint[:], rl.ShaderUniformVec4, 1)
-	}
-}
-
-// tintToColor converts RGBA 0-1 to rl.Color. If tint is nil, returns default gray for uncolored objects.
+// tintToColor converts RGBA 0–1 to rl.Color; nil means the default gray.
 func tintToColor(tint *[4]float32) rl.Color {
 	if tint == nil {
 		return defaultPrimitiveColor
 	}
-	r := uint8(tint[0] * 255)
-	g := uint8(tint[1] * 255)
-	b := uint8(tint[2] * 255)
-	a := uint8(tint[3] * 255)
-	return rl.NewColor(r, g, b, a)
-}
-
-// drawCached draws a cached mesh with the given key at position and scale (scale 0 → 1).
-// modelCenterOffset shifts the mesh in model space before scale/translate so the scene position
-// is the primitive's center. Use (0,0,0) for cube/sphere (already centered); (0,-0.5,0) for cylinder
-// (raylib cylinder has base at Y=0, top at Y=height, so offset -height/2 centers it).
-// tint is optional (nil = default material color); otherwise RGBA 0-1.
-func (r *Registry) drawCached(key string, position, scale [3]float32, modelCenterOffset [3]float32, tint *[4]float32) {
-	c, ok := r.cache[key]
-	if !ok {
-		return
-	}
-	// Set material albedo color so raylib and our shader use the right tint.
-	if albedo := c.mtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = tintToColor(tint)
-	}
-	defaultTint := [4]float32{0.5, 0.5, 0.5, 1}
-	if tint != nil {
-		defaultTint = *tint
-	}
-	r.setLitShaderUniforms(c.mtl.Shader)
-	r.setColDiffuse(c.mtl.Shader, defaultTint)
-	sx, sy, sz := scale[0], scale[1], scale[2]
-	if sx == 0 {
-		sx = 1
-	}
-	if sy == 0 {
-		sy = 1
-	}
-	if sz == 0 {
-		sz = 1
-	}
-	scaleM := rl.MatrixScale(sx, sy, sz)
-	transM := rl.MatrixTranslate(position[0], position[1], position[2])
-	var transform rl.Matrix
-	if modelCenterOffset[0] != 0 || modelCenterOffset[1] != 0 || modelCenterOffset[2] != 0 {
-		offsetM := rl.MatrixTranslate(modelCenterOffset[0], modelCenterOffset[1], modelCenterOffset[2])
-		// Order: offset (center mesh), then scale, then translate to position.
-		transform = rl.MatrixMultiply(rl.MatrixMultiply(transM, scaleM), offsetM)
-	} else {
-		transform = rl.MatrixMultiply(scaleM, transM)
-	}
-	rl.DrawMesh(c.mesh, c.mtl, transform)
-}
-
-// drawCachedWithTexture draws a cached mesh with textured material. with the given key using the textured material and the given albedo texture.
-func (r *Registry) drawCachedWithTexture(key string, position, scale [3]float32, modelCenterOffset [3]float32, tex rl.Texture2D, tint *[4]float32) {
-	c, ok := r.cache[key]
-	if !ok {
-		return
-	}
-	// For terrain we want the texture to repeat when UVs go beyond 0-1.
-	if key == "terrain" {
-		rl.SetTextureWrap(tex, rl.TextureWrapRepeat)
-	}
-	rl.SetMaterialTexture(&c.texturedMtl, rl.MapAlbedo, tex)
-	if albedo := c.texturedMtl.GetMap(rl.MapAlbedo); albedo != nil {
-		albedo.Color = tintToColor(tint)
-	}
-	defaultTint := [4]float32{1, 1, 1, 1}
-	if tint != nil {
-		defaultTint = *tint
-	}
-	r.setLitShaderUniforms(c.texturedMtl.Shader)
-	r.setColDiffuse(c.texturedMtl.Shader, defaultTint)
-	// UV tiling: terrain can repeat its texture; other primitives use (1,1).
-	uv := [2]float32{1, 1}
-	if key == "terrain" {
-		uv = r.terrainUVScale
-	}
-	if loc := rl.GetShaderLocation(c.texturedMtl.Shader, "uvScale"); loc >= 0 {
-		rl.SetShaderValueV(c.texturedMtl.Shader, loc, uv[:], rl.ShaderUniformVec2, 1)
-	}
-	sx, sy, sz := scale[0], scale[1], scale[2]
-	if sx == 0 {
-		sx = 1
-	}
-	if sy == 0 {
-		sy = 1
-	}
-	if sz == 0 {
-		sz = 1
-	}
-	scaleM := rl.MatrixScale(sx, sy, sz)
-	transM := rl.MatrixTranslate(position[0], position[1], position[2])
-	var transform rl.Matrix
-	if modelCenterOffset[0] != 0 || modelCenterOffset[1] != 0 || modelCenterOffset[2] != 0 {
-		offsetM := rl.MatrixTranslate(modelCenterOffset[0], modelCenterOffset[1], modelCenterOffset[2])
-		transform = rl.MatrixMultiply(rl.MatrixMultiply(transM, scaleM), offsetM)
-	} else {
-		transform = rl.MatrixMultiply(scaleM, transM)
-	}
-	rl.DrawMesh(c.mesh, c.texturedMtl, transform)
-}
-
-// Draw draws one instance of the given type at position with scale. tint is optional (nil = default color). of the given type at position with scale.
-// Must be called between BeginMode3D and EndMode3D.
-// SetView must be called once per frame before drawing so lit primitives get shading.
-// Unknown types are skipped. "cube", "sphere", "cylinder", and "plane" are created on first use.
-func (r *Registry) Draw(primType string, position, scale [3]float32, tint *[4]float32) {
-	switch primType {
-	case "cube":
-		r.ensureCube()
-		r.drawCached("cube", position, scale, [3]float32{0, 0, 0}, tint)
-	case "sphere":
-		r.ensureSphere()
-		r.drawCached("sphere", position, scale, [3]float32{0, 0, 0}, tint)
-	case "cylinder":
-		r.ensureCylinder()
-		r.drawCached("cylinder", position, scale, [3]float32{0, -0.5, 0}, tint)
-	case "plane":
-		r.ensurePlane()
-		r.drawCached("plane", position, scale, [3]float32{0, 0, 0}, tint)
-	case "terrain":
-		r.drawCached("terrain", position, scale, [3]float32{0, 0, 0}, tint)
-	default:
-		// Unknown type; skip.
-	}
-}
-
-// DrawWithTexture draws one instance of the given type at position with scale, using the given texture as albedo.
-// Must be called between BeginMode3D and EndMode3D. SetView must be called once per frame before drawing.
-func (r *Registry) DrawWithTexture(primType string, position, scale [3]float32, tex rl.Texture2D, tint *[4]float32) {
-	if !rl.IsTextureValid(tex) {
-		r.Draw(primType, position, scale, tint)
-		return
-	}
-	switch primType {
-	case "cube":
-		r.ensureCube()
-		r.drawCachedWithTexture("cube", position, scale, [3]float32{0, 0, 0}, tex, tint)
-	case "sphere":
-		r.ensureSphere()
-		r.drawCachedWithTexture("sphere", position, scale, [3]float32{0, 0, 0}, tex, tint)
-	case "cylinder":
-		r.ensureCylinder()
-		r.drawCachedWithTexture("cylinder", position, scale, [3]float32{0, -0.5, 0}, tex, tint)
-	case "plane":
-		r.ensurePlane()
-		r.drawCachedWithTexture("plane", position, scale, [3]float32{0, 0, 0}, tex, tint)
-	case "terrain":
-		r.drawCachedWithTexture("terrain", position, scale, [3]float32{0, 0, 0}, tex, tint)
-	default:
-		r.Draw(primType, position, scale, tint)
-	}
+	return rl.NewColor(uint8(tint[0]*255), uint8(tint[1]*255), uint8(tint[2]*255), uint8(tint[3]*255))
 }
