@@ -18,7 +18,7 @@ The engine’s UI is a **primitive CSS-driven** layer: no shadows, no rounded co
 
 ### File location
 
-Put stylesheets under **`assets/ui/`**, e.g. `assets/ui/default.css`. Load at runtime with `uiEngine.LoadCSS(path)`. When running from repo root use `assets/ui/...`; from `cmd/game` you may need `../../assets/ui/...` (same pattern as other assets).
+Put stylesheets under **`assets/ui/`**, e.g. `assets/ui/default.css`. Load at runtime with `uiEngine.LoadCSS(path)`. The app resolves the path with `assets.Find("assets/ui/default.css")`, which works whether the game runs from the repo root or `cmd/game`.
 
 ### Selectors
 
@@ -40,8 +40,9 @@ No combinators (`.a .b`), no pseudo-classes (`:hover`), no tag selectors. Later 
 | `height` | Height in pixels | Same |
 | `left`, `x` | Horizontal position | Pixels or **`N%`** (0–100; relative to screen width, node centered when width known) |
 | `top`, `y` | Vertical position | Pixels or **`N%`** (0–100; relative to screen height, node centered when height known) |
+| `padding` | Offset of the text from the node's top-left corner | Pixels (default 4) |
 
-Anything else is ignored. No `padding`, `margin`, `box-shadow`, `border-radius`, or units other than `px`/`%` for left/top.
+Anything else is ignored. No `margin`, `box-shadow`, `border-radius`, or units other than `px`/`%` for left/top.
 
 ### Example
 
@@ -74,7 +75,7 @@ Nodes are created in **code**, not in HTML or another markup format. Each node h
 - **Bounds** — set from the resolved style (`left`/`top`/`width`/`height` or `left%`/`top%`).
 - **Text** — optional; if set, drawn with `color` at a small offset from the node’s position.
 
-Create with `ui.NewNode(typ, class, id, text)`, then `uiEngine.AddNode(n)` (or `SetNodes`). Draw order is the order of nodes in the list (first = back, last = front).
+Create with `ui.NewNode(typ, class, id, text)` and pass the frame's nodes to `uiEngine.SetNodes(nodes)`. Draw order is the order of nodes in the list (first = back, last = front). Calling `SetNodes` every frame is cheap: styles are only re-resolved when the list of nodes changes (changing a node's `Text` needs no re-resolve).
 
 ---
 
@@ -82,9 +83,12 @@ Create with `ui.NewNode(typ, class, id, text)`, then `uiEngine.AddNode(n)` (or `
 
 - **`ui.New()`** — New engine (no stylesheet, no nodes).
 - **`LoadCSS(path string) error`** — Load and parse a `.css` file; replaces current stylesheet.
-- **`SetStylesheet(sheet *Stylesheet)`** — Set stylesheet directly.
-- **`AddNode(n *Node)`** / **`SetNodes(nodes []*Node)`** — Add one node or replace all.
-- **`Draw()`** — Resolve styles for each node and draw (background rect, optional 1px border, optional text). Call once per frame after debug and before terminal.
+- **`LoadFont(path string) error`** / **`Font()`** — Load the TTF/OTF font used for text (also shared with the terminal and debug overlay); without one, raylib's default font is used.
+- **`SetNodes(nodes []*Node)`** — Set the nodes to draw.
+- **`Draw()`** — Draw each node (background rect, optional 1px border, optional text). Call once per frame after debug and before terminal.
+- **`HitTest(x, y int32) (*Node, bool)`** — The topmost node under a screen point, using the same layout as `Draw` (the app uses it so clicks on the UI don't reach the scene).
+- **`ui.DrawText` / `ui.MeasureText`** — Draw or measure text with a font, falling back to raylib's default font when none is loaded.
+- **`ui.Inspector`** — Builds the selected-object panel: `AppendNodes(dst, ui.Selection{...})` updates its labels and appends its nodes.
 
 ---
 

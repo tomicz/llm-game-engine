@@ -9,12 +9,12 @@ The engine includes a minimal **3D physics** layer: gravity, AABB (axis-aligned 
 | Component | Location | Role |
 |-----------|----------|------|
 | **Physics world** | `internal/physics/` | Bodies, gravity, integration, AABB collision resolution |
-| **Scene integration** | `internal/scene/scene.go` | 1:1 bodies with scene objects, sync, step only in game mode |
-| **Per-object flag** | `ObjectInstance.Physics` | Enable or disable physics (falling/collision) per object |
+| **Scene integration** | `internal/scene/scene.go` (`stepPhysics`) | Each object owns its body; sync, step only in game mode |
+| **Per-object flag** | `scene.Object.Physics` | Enable or disable physics (falling/collision) per object |
 
 - **Gravity** is applied along **-Y** by default (`[0, -9.8, 0]`). There is **no global floor**: dynamic objects can fall below Y=0 until they hit another body (e.g. a static plane).
 - **Static** bodies (physics disabled) do not move and are not affected by gravity but **still collide**: they block falling objects.
-- **Dynamic** bodies (physics enabled) get gravity, velocity integration, and collision response (push apart, velocity zeroed on collision axis).
+- **Dynamic** bodies (physics enabled) get gravity, velocity integration, and collision response (pushed away from the other body, velocity zeroed on the collision axis).
 
 ---
 
@@ -33,13 +33,15 @@ Bodies are created by the scene; you do not create them directly unless extendin
 ### World
 
 - **Gravity** – vector, default `[0, -9.8, 0]`. Change with `SetGravity([3]float32)`.
-- **Bodies** – slice of bodies in the same order as scene objects.
+- **Bodies** – the bodies to simulate; the scene sets this list every step.
+
+**Advance(dt)** is what the scene calls once per frame. It caps the frame time at 0.25 s (so a stall such as dragging the window doesn't launch everything) and splits it into `Step`s of at most 1/60 s, so fast bodies don't tunnel through thin colliders after a slow frame. At 60 FPS that is one step per frame.
 
 **Step(dt)**:
 
 1. Applies gravity to non-static bodies.
 2. Integrates velocity into position.
-3. Resolves AABB vs AABB collisions: finds overlapping pairs, computes minimum penetration axis, pushes bodies apart (static bodies do not move), and zeroes velocity on that axis for both.
+3. Resolves AABB vs AABB collisions: finds overlapping pairs, computes the minimum penetration axis, and pushes each body **away from the other's center** along that axis (static bodies do not move; two dynamic bodies split the push by mass). Velocity on that axis is zeroed for dynamic bodies. The result does not depend on the order of bodies in the list.
 
 No ground plane or world bounds: bodies only stop when they hit another body.
 
@@ -47,19 +49,14 @@ No ground plane or world bounds: bodies only stop when they hit another body.
 
 ## Scene integration
 
-- The scene keeps a **physics World** and maintains **one body per scene object** (same order).
-- **ensurePhysicsBodies()** – Ensures `len(Bodies) == len(Objects)`; adds bodies for new objects. Static/dynamic is set from each object’s **Physics** flag.
-- **syncSceneToPhysics()** – Copies each object’s position, scale, and physics flag into the corresponding body (including `Static = !physicsEnabled(obj)`).
-- **syncPhysicsToScene()** – Copies dynamic body positions back to scene objects (static bodies are not written back).
+- The scene keeps a **physics World**. Each scene object **owns its body**, created on the first physics step after the object is added. Deleting an object drops its body, so no invisible colliders are left behind; an object restored by undo starts at rest.
+- Objects are the source of truth. Each frame in **game mode** (terminal closed), `Scene.Update()` calls `stepPhysics(rl.GetFrameTime())`, which:
+  1. copies each object's position, collider size, and physics flag into its body (`Static = !obj.PhysicsEnabled()`),
+  2. calls `World.Advance(dt)`,
+  3. copies dynamic body positions back to their objects (static bodies are not written back).
+- **Collider size** is the object's scale (zero components = 1). Planes always use a thickness of 0.1. The terrain's collider is its full box (width × max height × depth).
 
-Each frame in **game mode** (terminal closed), `Update()` runs:
-
-1. `ensurePhysicsBodies()`
-2. `syncSceneToPhysics()`
-3. `physicsWorld.Step(rl.GetFrameTime())`
-4. `syncPhysicsToScene()`
-
-When the **terminal is open**, physics is not stepped; the editor can move objects and the next time you close the terminal, the last positions are synced into the physics world and simulation continues from there.
+When the **terminal is open**, physics is not stepped; the editor can move objects and the next time you close the terminal, simulation continues from their new positions.
 
 ---
 
@@ -69,7 +66,7 @@ Every object can have **physics on** (falls, collides) or **off** (static: no mo
 
 ### Data
 
-- **ObjectInstance.Physics** – `*bool`, YAML: `physics: true` or `physics: false`, optional.
+- **Object.Physics** – `*bool`, YAML: `physics: true` or `physics: false`, optional.
 - **Default**: if `Physics` is **nil** (omitted in YAML), it is treated as **on** (dynamic). So existing scenes without the key behave as before.
 
 ### YAML
@@ -106,11 +103,11 @@ With the terminal open and an object selected, the inspector shows **Physics: On
 
 ## Scene API (for LLM or scripts)
 
-- **SetPhysicsForIndex(index int, enabled bool) error** – Set physics on/off for the object at `index`. Returns an error if index is out of range.
-- **SetSelectedPhysics(enabled bool) error** – Set physics for the currently selected object. Returns an error if no object is selected.
-- **PhysicsEnabledForObject(obj ObjectInstance) bool** – Returns whether the object has physics enabled (for display or logic).
+- **obj.SetPhysics(enabled bool)** – Turn physics on or off for an object (e.g. one from `Scene.RequireSelected()`, `Scene.Object(id)`, or a query).
+- **obj.PhysicsEnabled() bool** – Whether the object has physics enabled (nil counts as on).
+- **Scene.SetGravity([3]float32)** – Set the world gravity (`cmd gravity <y>`).
 
-Persist changes with **SaveScene()** (or the `cmd save` command).
+Persist changes with **Scene.Save()** (or the `cmd save` command).
 
 ---
 
